@@ -1,0 +1,1555 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <title>Sourdough Calculator</title>
+
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700;800&family=Space+Mono:wght@400;700&family=Spectral:ital,wght@0,400;0,500;0,600;1,400;1,500&display=swap" rel="stylesheet" />
+
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: "class",
+      theme: {
+        extend: {
+          colors: {
+            paper: '#efe8db',
+            card: '#fffdf7',
+            linen: '#f7efe0',
+            oat: '#fbf7ee',
+            ink: '#33302a',
+            muted: '#8a7d68',
+            faint: '#a89a80',
+            disabled: '#b0a48c',
+            onDark: '#fbf2e9',
+            terracotta: '#b45c3f',
+            olive: '#6f7048',
+            warning: '#c98a3c',
+            danger: '#a2472c',
+            'border-card': '#e7dcc6',
+            'border-field': '#e2d6bf',
+            'border-leader': '#cdbfa2',
+            surface: '#fff9ef',
+          },
+          fontFamily: {
+            serif: ['Spectral', 'Georgia', 'serif'],
+            sans: ['Hanken Grotesk', '-apple-system', 'sans-serif'],
+            mono: ['Space Mono', 'monospace'],
+          },
+          borderRadius: {
+            card: '20px',
+            field: '11px',
+            btn: '16px',
+            chip: '100px',
+          },
+          boxShadow: {
+            card: '0 1px 0 rgba(255,255,255,.8) inset, 0 8px 20px -14px rgba(80,60,30,.6)',
+            btnInk: '0 10px 22px -10px rgba(51,48,42,.7)',
+            btnTerracotta: '0 10px 22px -10px rgba(180,92,63,.8)',
+          },
+        }
+      }
+    }
+  </script>
+
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+
+  <!-- React & ReactDOM -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <style>
+    body {
+      background-color: #fff9ef;
+      background-image: radial-gradient(#33302a 3%, transparent 3%);
+      background-size: 24px 24px;
+      -webkit-font-smoothing: antialiased;
+      margin: 0;
+      padding: 0;
+      min-height: 100vh;
+      font-family: 'Hanken Grotesk', -apple-system, sans-serif;
+    }
+    .pb-safe { padding-bottom: env(safe-area-inset-bottom, 20px); }
+    .pt-safe { padding-top: env(safe-area-inset-top, 0px); }
+    @keyframes fadeIn {
+      from { opacity: 0; transform: scale(0.98); }
+      to { opacity: 1; transform: scale(1); }
+    }
+    .animate-fadeIn { animation: fadeIn 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+  </style>
+</head>
+<body class="bg-surface text-ink antialiased selection:bg-terracotta/20 selection:text-ink">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useMemo, useRef } = React;
+
+    // --- Audio Synthesizer ---
+    function playKitchenChime() {
+      try {
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        if (!AudioCtx) return;
+        const ctx = new AudioCtx();
+        const playTone = (freq, start, dur) => {
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          osc.type = 'sine';
+          osc.frequency.value = freq;
+          gain.gain.setValueAtTime(0, ctx.currentTime + start);
+          gain.gain.linearRampToValueAtTime(0.35, ctx.currentTime + start + 0.04);
+          gain.gain.linearRampToValueAtTime(0, ctx.currentTime + start + dur);
+          osc.start(ctx.currentTime + start);
+          osc.stop(ctx.currentTime + start + dur + 0.08);
+        };
+        [0, 0.38, 0.76].forEach((offset) => {
+          playTone(880, offset, 0.28);
+          playTone(1100, offset + 0.14, 0.22);
+        });
+        if ('vibrate' in navigator) {
+          navigator.vibrate([280, 90, 280]);
+        }
+      } catch (e) {}
+    }
+
+    // --- Format Seconds to HH:MM:SS ---
+    function formatTimeRemaining(seconds) {
+      const s = Math.max(0, Math.floor(seconds));
+      const h = Math.floor(s / 3600);
+      const m = Math.floor((s % 3600) / 60);
+      const sec = s % 60;
+      if (h > 0) {
+        return `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
+      }
+      return `${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
+    }
+
+    // --- Lucide Icon Helper ---
+    function LucideIcon({ name, className = "w-5 h-5", strokeWidth = 2 }) {
+      useEffect(() => {
+        if (window.lucide) {
+          window.lucide.createIcons();
+        }
+      });
+      return <i data-lucide={name} className={className} style={{ strokeWidth }}></i>;
+    }
+
+    // --- Initial Starters & History Seeds ---
+    const INITIAL_STARTERS = [
+      {
+        id: 'starter-1',
+        name: 'Doughlene',
+        flourType: '100% Dark Rye',
+        hydration: 100,
+        status: 'active_peak',
+        lastFedText: '4h ago',
+        lastRatio: '1:2:2 feed · Active & at peak',
+      },
+      {
+        id: 'starter-2',
+        name: 'Bread Pitt',
+        flourType: 'Stiff Starter · AP Flour',
+        hydration: 60,
+        status: 'hungry',
+        lastFedText: '14h ago',
+        lastRatio: '1:1:1 feed · Passed peak',
+      }
+    ];
+
+    const INITIAL_HISTORY = [
+      {
+        id: 1,
+        date: 'Oct 12, 2023',
+        title: 'Country Sourdough',
+        rating: 4,
+        hydration: 78,
+        totalFlour: 1000,
+        starterGrams: 200,
+        starterId: 'starter-1',
+        flourBlend: [
+          { id: 1, name: 'Bread Flour', pct: 80 },
+          { id: 2, name: 'Whole Wheat', pct: 20 },
+        ],
+        notes: 'Great oven spring, slightly dense crumb.'
+      },
+      {
+        id: 2,
+        date: 'Oct 05, 2023',
+        title: 'Walnut Cranberry',
+        rating: 5,
+        hydration: 82,
+        totalFlour: 800,
+        starterGrams: 120,
+        starterId: 'starter-1',
+        flourBlend: [
+          { id: 1, name: 'Bread Flour', pct: 70 },
+          { id: 2, name: 'Whole Wheat', pct: 20 },
+          { id: 3, name: 'Dark Rye', pct: 10 },
+        ],
+        notes: 'Perfect holiday loaf. Nuts toasted prior.'
+      },
+      {
+        id: 3,
+        date: 'Sep 28, 2023',
+        title: 'Whole Wheat Experiment',
+        rating: 2,
+        hydration: 85,
+        totalFlour: 900,
+        starterGrams: 225,
+        starterId: 'starter-2',
+        flourBlend: [
+          { id: 1, name: 'Whole Wheat', pct: 60 },
+          { id: 2, name: 'Bread Flour', pct: 40 },
+        ],
+        notes: 'Overproofed. Room was too warm.'
+      }
+    ];
+
+    const INITIAL_ACTIVE_BAKE = {
+      id: 101,
+      title: 'Country Loaf',
+      stage: 'autolyse',
+      loaves: 1,
+      hydration: 75,
+      totalFlour: 500,
+      starterGrams: 100,
+      starterId: 'starter-1',
+      foldsCompleted: 2,
+      totalFolds: 4,
+      timerTargetEnd: Date.now() + 18 * 60 * 1000,
+      timerDuration: 30 * 60,
+      timerRunning: true,
+      flourBlend: [
+        { id: 1, name: 'Bread Flour', pct: 80 },
+        { id: 2, name: 'Whole Wheat', pct: 20 },
+      ],
+      timeline: [
+        { id: 't1', time: '08:00 AM', text: 'Autolyse started (30m)' },
+        { id: 't2', time: '08:30 AM', text: 'Autolyse extended (+15m)' },
+        { id: 't3', time: '08:45 AM', text: 'Autolyse finished' },
+        { id: 't4', time: '09:15 AM', text: 'Stretch & fold 1 of 4 logged' },
+        { id: 't5', time: '09:45 AM', text: 'Stretch & fold 2 of 4 logged' },
+      ]
+    };
+
+    // --- Main App Component ---
+    function App() {
+      const [activeTab, setActiveTab] = useState('active'); // 'active' | 'history' | 'diary'
+      const [isBuildingRecipe, setIsBuildingRecipe] = useState(false);
+
+      const [user, setUser] = useState(() => {
+        try {
+          const saved = localStorage.getItem('sourdough_user');
+          return saved ? JSON.parse(saved) : null;
+        } catch { return null; }
+      });
+
+      const [hasSeenWelcome, setHasSeenWelcome] = useState(() => {
+        return localStorage.getItem('sourdough_seen_welcome') === 'true';
+      });
+      const [isWelcomeOpen, setIsWelcomeOpen] = useState(!hasSeenWelcome);
+      const [wakeLockActive, setWakeLockActive] = useState(false);
+
+      const [starters, setStarters] = useState(INITIAL_STARTERS);
+      const [history, setHistory] = useState(INITIAL_HISTORY);
+      const [activeBakes, setActiveBakes] = useState([INITIAL_ACTIVE_BAKE]);
+
+      // ================= SECTION 1: TARGET BANNETON SIZE STATE =================
+      const [loafSizePreset, setLoafSizePreset] = useState('large'); // 'small' | 'medium' | 'large' | 'custom'
+      const [calcFlour, setCalcFlour] = useState(500);
+      const [calcLoaves, setCalcLoaves] = useState(1);
+      const [calcHydration, setCalcHydration] = useState(75);
+      const [calcSalt, setCalcSalt] = useState(2.0);
+
+      // ================= SECTION 2: STARTER INPUT STATE =================
+      const [starterInputMode, setStarterInputMode] = useState('diary'); // 'diary' | 'grams' | 'manual'
+      const [selectedStarterId, setSelectedStarterId] = useState('starter-1');
+      const [starterTotalGrams, setStarterTotalGrams] = useState(100);
+      const [manualStarterFlour, setManualStarterFlour] = useState(50);
+      const [manualStarterWater, setManualStarterWater] = useState(50);
+
+      // ================= SECTION 3: FLOUR BLEND STATE =================
+      const [flourBlend, setFlourBlend] = useState([
+        { id: 1, name: 'Bread Flour', pct: 80 },
+        { id: 2, name: 'Whole Wheat', pct: 20 },
+      ]);
+
+      // Levain Builder State (Diary Tab)
+      const [levainTarget, setLevainTarget] = useState(150);
+      const [levainRatio, setLevainRatio] = useState('1:2:2');
+
+      // Feed Modal State
+      const [selectedFeedStarter, setSelectedFeedStarter] = useState(null);
+      const [feedSeedGrams, setFeedSeedGrams] = useState(25);
+      const [feedFlourGrams, setFeedFlourGrams] = useState(50);
+      const [feedWaterGrams, setFeedWaterGrams] = useState(50);
+      const [feedNotes, setFeedNotes] = useState('');
+
+      // Live Timer Tick
+      const [now, setNow] = useState(Date.now());
+      useEffect(() => {
+        const interval = setInterval(() => setNow(Date.now()), 1000);
+        return () => clearInterval(interval);
+      }, []);
+
+      // Banneton Preset Handler (Sets predetermined flour weight)
+      const handleSelectSizePreset = (preset) => {
+        setLoafSizePreset(preset);
+        if (preset === 'small') setCalcFlour(300);
+        else if (preset === 'medium') setCalcFlour(400);
+        else if (preset === 'large') setCalcFlour(500);
+      };
+
+      const selectedStarterEntity = starters.find(s => s.id === selectedStarterId) || starters[0];
+
+      // ================= CALCULATION ENGINE =================
+      let computedStarterFlour = 0;
+      let computedStarterWater = 0;
+      let computedTotalStarter = 0;
+
+      if (starterInputMode === 'diary') {
+        const hyd = selectedStarterEntity ? selectedStarterEntity.hydration : 100;
+        computedTotalStarter = starterTotalGrams * calcLoaves;
+        computedStarterFlour = Math.round(computedTotalStarter / (1 + (hyd / 100)));
+        computedStarterWater = computedTotalStarter - computedStarterFlour;
+      } else if (starterInputMode === 'grams') {
+        computedTotalStarter = starterTotalGrams * calcLoaves;
+        computedStarterFlour = Math.round(computedTotalStarter / 2);
+        computedStarterWater = computedTotalStarter - computedStarterFlour;
+      } else if (starterInputMode === 'manual') {
+        computedStarterFlour = manualStarterFlour * calcLoaves;
+        computedStarterWater = manualStarterWater * calcLoaves;
+        computedTotalStarter = computedStarterFlour + computedStarterWater;
+      }
+
+      const totalWaterGrams = Math.round((calcFlour * calcHydration) / 100) * calcLoaves;
+      const totalSaltGrams = Math.round((calcFlour * calcSalt) / 100 * 10) / 10 * calcLoaves;
+
+      const mainFlourTotal = Math.max(0, (calcFlour * calcLoaves) - computedStarterFlour);
+      const mainWaterGrams = Math.max(0, totalWaterGrams - computedStarterWater);
+
+      const totalBlendPct = flourBlend.reduce((acc, f) => acc + (Number(f.pct) || 0), 0) || 100;
+      const itemizedFlourRows = flourBlend.map(f => {
+        const itemPct = (Number(f.pct) || 0) / totalBlendPct;
+        const grams = Math.round(mainFlourTotal * itemPct);
+        const bakersPct = calcFlour > 0 ? Math.round((grams / (calcFlour * calcLoaves)) * 1000) / 10 : 0;
+        return {
+          id: f.id,
+          name: `${f.name} (${f.pct}%)`,
+          grams,
+          bakersPct,
+        };
+      });
+
+      const totalDoughGrams = (calcFlour * calcLoaves) + totalWaterGrams + totalSaltGrams;
+      const totalDoughPct = calcFlour > 0 ? Math.round((totalDoughGrams / (calcFlour * calcLoaves)) * 1000) / 10 : 0;
+
+      const ratioParts = useMemo(() => {
+        const [rS, rF, rW] = levainRatio.split(':').map(Number);
+        const totalParts = (rS || 1) + (rF || 2) + (rW || 2);
+        const part = totalParts > 0 ? levainTarget / totalParts : 0;
+        return {
+          seed: Math.round(part * (rS || 1)),
+          flour: Math.round(part * (rF || 2)),
+          water: Math.round(part * (rW || 2)),
+        };
+      }, [levainTarget, levainRatio]);
+
+      const handleAddFlour = () => {
+        setFlourBlend(prev => [...prev, { id: Date.now(), name: 'Dark Rye', pct: 10 }]);
+      };
+      const handleRemoveFlour = (id) => {
+        if (flourBlend.length <= 1) return;
+        setFlourBlend(prev => prev.filter(f => f.id !== id));
+      };
+      const handleUpdateFlour = (id, field, val) => {
+        setFlourBlend(prev => prev.map(f => f.id === id ? { ...f, [field]: field === 'pct' ? Number(val) || 0 : val } : f));
+      };
+
+      const handleCloneBake = (item) => {
+        setCalcHydration(item.hydration);
+        setCalcFlour(item.totalFlour);
+        if (item.totalFlour <= 320) setLoafSizePreset('small');
+        else if (item.totalFlour <= 420) setLoafSizePreset('medium');
+        else if (item.totalFlour <= 520) setLoafSizePreset('large');
+        else setLoafSizePreset('custom');
+
+        if (item.starterGrams) setStarterTotalGrams(item.starterGrams);
+        if (item.starterId) {
+          setSelectedStarterId(item.starterId);
+          setStarterInputMode('diary');
+        }
+        if (item.flourBlend && item.flourBlend.length > 0) {
+          setFlourBlend(item.flourBlend);
+        }
+        setActiveTab('active');
+        setIsBuildingRecipe(true);
+      };
+
+      const toggleWakeLock = async () => {
+        if (!('wakeLock' in navigator)) {
+          setWakeLockActive(!wakeLockActive);
+          return;
+        }
+        try {
+          if (!wakeLockActive) {
+            await navigator.wakeLock.request('screen');
+            setWakeLockActive(true);
+          } else {
+            setWakeLockActive(false);
+          }
+        } catch {
+          setWakeLockActive(!wakeLockActive);
+        }
+      };
+
+      const handleCloseWelcome = () => {
+        localStorage.setItem('sourdough_seen_welcome', 'true');
+        setHasSeenWelcome(true);
+        setIsWelcomeOpen(false);
+      };
+
+      const handleSignIn = (email) => {
+        const newUser = { id: 'u1', email: email || 'gabrieljohnpersonal@gmail.com', name: 'Gabriel' };
+        setUser(newUser);
+        handleCloseWelcome();
+      };
+
+      const handleOpenFeedModal = (starter) => {
+        setSelectedFeedStarter(starter);
+        if (starter.hydration === 60) {
+          setFeedSeedGrams(50);
+          setFeedFlourGrams(50);
+          setFeedWaterGrams(30);
+        } else {
+          setFeedSeedGrams(25);
+          setFeedFlourGrams(50);
+          setFeedWaterGrams(50);
+        }
+        setFeedNotes('');
+      };
+
+      return (
+        <div className="min-h-screen flex flex-col text-ink">
+          {/* Top Header */}
+          <header className="fixed top-0 w-full z-40 bg-surface/85 backdrop-blur-xl border-b border-border-card/50 shadow-sm">
+            <div className="max-w-lg mx-auto h-16 px-5 flex items-center justify-between">
+              <h1 className="font-serif text-[22px] font-semibold text-ink tracking-tight">
+                {activeTab === 'active' && (isBuildingRecipe ? 'Recipe Builder' : 'Active Bakes')}
+                {activeTab === 'history' && 'Bake History'}
+                {activeTab === 'diary' && 'Starter Diary'}
+              </h1>
+
+              <div className="flex items-center gap-2.5">
+                <button
+                  onClick={toggleWakeLock}
+                  className={`flex items-center gap-1 px-2.5 py-1 rounded-full border transition-all active:scale-95 ${
+                    wakeLockActive
+                      ? 'bg-linen border-terracotta/40 text-terracotta shadow-sm'
+                      : 'bg-oat border-border-field text-muted'
+                  }`}
+                >
+                  <LucideIcon name="lightbulb" className={`w-3.5 h-3.5 ${wakeLockActive ? 'text-terracotta' : 'text-faint'}`} />
+                  <span className="font-sans text-[10px] uppercase tracking-wider font-semibold">
+                    {wakeLockActive ? 'Awake' : 'Sleep'}
+                  </span>
+                </button>
+
+                <button
+                  onClick={() => setIsWelcomeOpen(true)}
+                  className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs shadow-sm transition-transform active:scale-95 ${
+                    user ? 'bg-terracotta text-white' : 'bg-ink text-onDark'
+                  }`}
+                >
+                  {user ? (user.name ? user.name[0].toUpperCase() : 'G') : <LucideIcon name="user" className="w-4 h-4 text-onDark" />}
+                </button>
+              </div>
+            </div>
+          </header>
+
+          {/* Main Body Content */}
+          <main className="flex-1 pt-20 pb-28 px-4 max-w-lg mx-auto w-full">
+            {/* ================= TAB 1: ACTIVE BAKES & RECIPE BUILDER ================= */}
+            {activeTab === 'active' && (
+              <div className="space-y-5 animate-fadeIn">
+                {/* 1A: RECIPE BUILDER */}
+                {isBuildingRecipe ? (
+                  <div className="space-y-5">
+                    <button
+                      onClick={() => setIsBuildingRecipe(false)}
+                      className="text-muted hover:text-ink font-sans text-xs font-semibold flex items-center gap-1"
+                    >
+                      <LucideIcon name="arrow-left" className="w-4 h-4" /> Back to Active Bakes
+                    </button>
+
+                    {/* ================= SECTION 1: TARGET BANNETON SIZE ================= */}
+                    <div className="bg-card shadow-card border border-border-card rounded-[20px] p-[17px] space-y-4">
+                      <div className="flex items-center gap-2">
+                        <span className="w-5 h-5 rounded-full bg-terracotta/10 text-terracotta flex items-center justify-center font-serif text-xs font-bold">1</span>
+                        <h2 className="font-serif text-[17px] font-semibold text-ink">Target Banneton Size</h2>
+                      </div>
+
+                      {/* Banneton Size Chips */}
+                      <div className="grid grid-cols-4 gap-2">
+                        {[
+                          { id: 'small', label: 'Small', sub: '300g flour' },
+                          { id: 'medium', label: 'Medium', sub: '400g flour' },
+                          { id: 'large', label: 'Large', sub: '500g flour' },
+                          { id: 'custom', label: 'Custom', sub: 'enter g' },
+                        ].map(chip => (
+                          <button
+                            key={chip.id}
+                            type="button"
+                            onClick={() => handleSelectSizePreset(chip.id)}
+                            className={`py-2 px-1 rounded-[11px] border text-center transition-all active:scale-95 flex flex-col items-center justify-center ${
+                              loafSizePreset === chip.id
+                                ? 'bg-linen border-terracotta text-ink font-bold shadow-sm'
+                                : 'bg-oat border-border-field text-muted hover:text-ink'
+                            }`}
+                          >
+                            <span className="font-sans text-xs">{chip.label}</span>
+                            <span className="font-sans text-[9px] text-faint">{chip.sub}</span>
+                          </button>
+                        ))}
+                      </div>
+
+                      {/* Conditional Total Flour Field (Only visible when Custom is active) */}
+                      {loafSizePreset === 'custom' && (
+                        <div className="space-y-1.5 pt-1 animate-fadeIn">
+                          <label className="font-sans text-[10px] text-faint uppercase font-semibold tracking-wider block">
+                            Custom Total Flour (g)
+                          </label>
+                          <div className="relative">
+                            <input
+                              type="number"
+                              value={calcFlour}
+                              onChange={(e) => setCalcFlour(Math.max(0, Number(e.target.value) || 0))}
+                              className="w-full bg-oat border border-border-field rounded-[11px] px-3 py-2 font-mono text-[17px] font-bold text-ink focus:outline-none focus:ring-2 focus:ring-terracotta/20 text-right pr-10"
+                            />
+                            <span className="absolute right-3 top-1/2 -translate-y-1/2 font-sans text-xs text-muted">g</span>
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="h-px bg-border-leader/40 w-full"></div>
+
+                      {/* Single Unified Row: Loaves, Hydration & Salt */}
+                      <div className="grid grid-cols-3 gap-3 pt-1">
+                        {/* Loaves */}
+                        <div className="space-y-1.5">
+                          <label className="font-sans text-[10px] text-faint uppercase font-semibold tracking-wider block text-center">
+                            Loaves
+                          </label>
+                          <div className="flex items-center bg-oat border border-border-field rounded-[11px] px-1.5 py-1.5">
+                            <button onClick={() => setCalcLoaves(prev => Math.max(1, prev - 1))} className="w-6 h-6 flex items-center justify-center font-bold text-muted hover:text-ink">-</button>
+                            <span className="flex-1 text-center font-mono font-bold text-[16px] text-ink">{calcLoaves}</span>
+                            <button onClick={() => setCalcLoaves(prev => prev + 1)} className="w-6 h-6 flex items-center justify-center font-bold text-muted hover:text-ink">+</button>
+                          </div>
+                        </div>
+
+                        {/* Hydration */}
+                        <div className="space-y-1.5">
+                          <label className="font-sans text-[10px] text-faint uppercase font-semibold tracking-wider flex items-center justify-center gap-1">
+                            <LucideIcon name="droplets" className="w-3 h-3 text-terracotta" /> Hydration
+                          </label>
+                          <div className="relative">
+                            <input
+                              type="number"
+                              value={calcHydration}
+                              onChange={(e) => setCalcHydration(Number(e.target.value) || 0)}
+                              className="w-full bg-oat border border-border-field rounded-[11px] px-2 py-2 font-mono font-bold text-[16px] text-ink focus:outline-none text-center pr-5"
+                            />
+                            <span className="absolute right-2 top-1/2 -translate-y-1/2 font-mono text-xs text-muted">%</span>
+                          </div>
+                        </div>
+
+                        {/* Salt */}
+                        <div className="space-y-1.5">
+                          <label className="font-sans text-[10px] text-faint uppercase font-semibold tracking-wider flex items-center justify-center gap-1">
+                            <LucideIcon name="sparkles" className="w-3 h-3 text-terracotta" /> Salt
+                          </label>
+                          <div className="relative">
+                            <input
+                              type="number"
+                              step="0.1"
+                              value={calcSalt}
+                              onChange={(e) => setCalcSalt(Number(e.target.value) || 0)}
+                              className="w-full bg-oat border border-border-field rounded-[11px] px-2 py-2 font-mono font-bold text-[16px] text-ink focus:outline-none text-center pr-5"
+                            />
+                            <span className="absolute right-2 top-1/2 -translate-y-1/2 font-mono text-xs text-muted">%</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* ================= SECTION 2: STARTER INPUT ================= */}
+                    <div className="bg-card shadow-card border border-border-card rounded-[20px] p-[17px] space-y-4">
+                      <div className="flex items-center gap-2">
+                        <span className="w-5 h-5 rounded-full bg-terracotta/10 text-terracotta flex items-center justify-center font-serif text-xs font-bold">2</span>
+                        <h2 className="font-serif text-[17px] font-semibold text-ink">Starter Input</h2>
+                      </div>
+
+                      {/* 3 Input Mode Selector Tabs */}
+                      <div className="grid grid-cols-3 gap-1.5 p-1 bg-oat border border-border-field rounded-xl">
+                        {[
+                          { id: 'diary', label: 'From Diary' },
+                          { id: 'grams', label: 'Total Starter' },
+                          { id: 'manual', label: 'Flour & Water' },
+                        ].map(mode => (
+                          <button
+                            key={mode.id}
+                            type="button"
+                            onClick={() => {
+                              if (!user && mode.id === 'diary') {
+                                setIsWelcomeOpen(true);
+                                return;
+                              }
+                              setStarterInputMode(mode.id);
+                            }}
+                            className={`py-2 px-1 rounded-lg text-center font-sans text-xs transition-all active:scale-95 ${
+                              starterInputMode === mode.id
+                                ? 'bg-card text-ink font-bold shadow-sm border border-border-card'
+                                : 'text-muted hover:text-ink'
+                            }`}
+                          >
+                            {mode.label}
+                          </button>
+                        ))}
+                      </div>
+
+                      {/* MODE A: PULL FROM STARTER DIARY */}
+                      {starterInputMode === 'diary' && (
+                        <div className="space-y-3">
+                          {!user ? (
+                            <div onClick={() => setIsWelcomeOpen(true)} className="bg-linen border border-dashed border-border-field rounded-[11px] p-2.5 flex items-start gap-2 cursor-pointer">
+                              <LucideIcon name="lock" className="w-3.5 h-3.5 text-terracotta flex-shrink-0 mt-0.5" />
+                              <p className="text-muted font-sans text-[12px] leading-tight">
+                                <span className="font-bold text-ink">Starter Diary sync is a member feature.</span> Sign in to choose your saved starters.
+                              </p>
+                            </div>
+                          ) : (
+                            <div className="space-y-3">
+                              <div className="space-y-1">
+                                <label className="font-sans text-[10px] text-faint uppercase font-semibold tracking-wider block">Choose Saved Starter</label>
+                                <div className="relative">
+                                  <select
+                                    value={selectedStarterId}
+                                    onChange={(e) => setSelectedStarterId(e.target.value)}
+                                    className="w-full appearance-none bg-oat border border-border-field rounded-[11px] px-3 py-2.5 font-sans font-medium text-xs text-ink focus:outline-none focus:ring-2 focus:ring-terracotta/20 pr-8"
+                                  >
+                                    {starters.map(s => (
+                                      <option key={s.id} value={s.id}>
+                                        🫙 {s.name} — {s.hydration}% Hydration ({s.status === 'active_peak' ? 'Active & Peak' : 'Hungry'})
+                                      </option>
+                                    ))}
+                                  </select>
+                                  <LucideIcon name="chevron-down" className="w-4 h-4 text-faint absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                                </div>
+                              </div>
+
+                              {selectedStarterEntity && (
+                                <div className="bg-linen rounded-xl p-3.5 border border-border-card space-y-3">
+                                  <div className="flex justify-between items-start">
+                                    <div>
+                                      <h4 className="font-serif font-bold text-ink text-base">{selectedStarterEntity.name}</h4>
+                                      <p className="font-sans text-xs text-muted">{selectedStarterEntity.hydration}% Hydration · {selectedStarterEntity.flourType}</p>
+                                    </div>
+                                    <span className={`px-2.5 py-0.5 rounded-full font-sans text-[10px] uppercase font-bold tracking-wider border ${
+                                      selectedStarterEntity.status === 'active_peak'
+                                        ? 'bg-terracotta/10 text-terracotta border-terracotta/20'
+                                        : 'bg-warning/10 text-warning border-warning/20'
+                                    }`}>
+                                      {selectedStarterEntity.status === 'active_peak' ? 'Active & Peak' : 'Hungry'}
+                                    </span>
+                                  </div>
+
+                                  <div className="flex items-center justify-between border-t border-dashed border-border-leader/50 pt-2.5">
+                                    <span className="font-sans text-xs text-muted font-medium">Starter amount to use:</span>
+                                    <div className="relative w-28">
+                                      <input
+                                        type="number"
+                                        value={starterTotalGrams}
+                                        onChange={(e) => setStarterTotalGrams(Math.max(0, Number(e.target.value) || 0))}
+                                        className="w-full bg-oat border border-border-field rounded-lg px-2 py-1 font-mono font-bold text-sm text-ink text-right pr-6 focus:outline-none"
+                                      />
+                                      <span className="absolute right-2 top-1/2 -translate-y-1/2 font-sans text-xs text-muted">g</span>
+                                    </div>
+                                  </div>
+
+                                  <div className="bg-card/70 px-3 py-1.5 rounded-lg text-center font-sans text-[11px] text-terracotta font-semibold">
+                                    ✓ Using {selectedStarterEntity.name} ({starterTotalGrams}g total starter)
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* MODE B: TOTAL STARTER WEIGHT */}
+                      {starterInputMode === 'grams' && (
+                        <div className="space-y-3">
+                          <div className="space-y-1.5">
+                            <label className="font-sans text-[10px] text-faint uppercase font-semibold tracking-wider block">
+                              Total Starter / Levain to Use (g)
+                            </label>
+                            <div className="relative">
+                              <input
+                                type="number"
+                                value={starterTotalGrams}
+                                onChange={(e) => setStarterTotalGrams(Math.max(0, Number(e.target.value) || 0))}
+                                className="w-full bg-oat border border-border-field rounded-[11px] px-3 py-2 font-mono text-[16px] font-bold text-ink focus:outline-none text-right pr-8"
+                              />
+                              <span className="absolute right-3 top-1/2 -translate-y-1/2 font-sans text-xs text-muted">g</span>
+                            </div>
+                          </div>
+                          <p className="font-serif italic text-xs text-muted">
+                            Assumes standard 100% hydration starter (50% flour / 50% water).
+                          </p>
+                        </div>
+                      )}
+
+                      {/* MODE C: MANUAL STARTER FLOUR & WATER */}
+                      {starterInputMode === 'manual' && (
+                        <div className="space-y-3">
+                          <div className="grid grid-cols-2 gap-3">
+                            <div className="space-y-1.5">
+                              <label className="font-sans text-[10px] text-faint uppercase font-semibold tracking-wider block">
+                                Starter Flour (g)
+                              </label>
+                              <div className="relative">
+                                <input
+                                  type="number"
+                                  value={manualStarterFlour}
+                                  onChange={(e) => setManualStarterFlour(Math.max(0, Number(e.target.value) || 0))}
+                                  className="w-full bg-oat border border-border-field rounded-[11px] px-3 py-2 font-mono text-[16px] font-bold text-ink focus:outline-none text-right pr-8"
+                                />
+                                <span className="absolute right-3 top-1/2 -translate-y-1/2 font-sans text-xs text-muted">g</span>
+                              </div>
+                            </div>
+
+                            <div className="space-y-1.5">
+                              <label className="font-sans text-[10px] text-faint uppercase font-semibold tracking-wider block">
+                                Starter Water (g)
+                              </label>
+                              <div className="relative">
+                                <input
+                                  type="number"
+                                  value={manualStarterWater}
+                                  onChange={(e) => setManualStarterWater(Math.max(0, Number(e.target.value) || 0))}
+                                  className="w-full bg-oat border border-border-field rounded-[11px] px-3 py-2 font-mono text-[16px] font-bold text-ink focus:outline-none text-right pr-8"
+                                />
+                                <span className="absolute right-3 top-1/2 -translate-y-1/2 font-sans text-xs text-muted">g</span>
+                              </div>
+                            </div>
+                          </div>
+                          <p className="font-serif italic text-xs text-muted">
+                            Total starter: {manualStarterFlour + manualStarterWater}g ({Math.round(manualStarterWater / (manualStarterFlour || 1) * 100)}% hydration).
+                          </p>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* ================= SECTION 3: FLOUR BLEND ================= */}
+                    <div className="space-y-3">
+                      <div className="flex justify-between items-center px-1">
+                        <h2 className="font-serif italic text-xs uppercase tracking-[0.22em] text-ink">Flour Blend</h2>
+                        {totalBlendPct !== 100 && (
+                          <span className="font-sans text-[10px] text-warning bg-warning/10 px-2 py-0.5 rounded-full font-bold">
+                            Total: {totalBlendPct}%
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="bg-card rounded-[20px] shadow-sm border border-border-card p-4 space-y-3">
+                        {flourBlend.map((f) => (
+                          <div key={f.id} className="flex items-center gap-3">
+                            <input
+                              type="text"
+                              value={f.name}
+                              onChange={(e) => handleUpdateFlour(f.id, 'name', e.target.value)}
+                              className="flex-1 bg-oat border border-border-field rounded-lg px-3 py-2 font-serif text-sm text-ink focus:outline-none"
+                            />
+                            <div className="w-24 relative">
+                              <input
+                                type="number"
+                                value={f.pct}
+                                onChange={(e) => handleUpdateFlour(f.id, 'pct', e.target.value)}
+                                className="w-full bg-oat border border-border-field rounded-[11px] px-2 py-2 font-mono font-bold text-sm text-center pr-6 focus:outline-none"
+                              />
+                              <span className="absolute right-2 top-1/2 -translate-y-1/2 font-mono text-xs text-muted">%</span>
+                            </div>
+                            <button
+                              onClick={() => handleRemoveFlour(f.id)}
+                              disabled={flourBlend.length <= 1}
+                              className="text-disabled hover:text-danger p-1 disabled:opacity-30"
+                            >
+                              <LucideIcon name="x" className="w-4 h-4" />
+                            </button>
+                          </div>
+                        ))}
+                        <button
+                          onClick={handleAddFlour}
+                          className="w-full py-2 bg-oat border border-dashed border-border-field rounded-xl font-sans text-xs font-bold text-terracotta uppercase tracking-wider flex items-center justify-center gap-1 hover:bg-linen"
+                        >
+                          <LucideIcon name="plus" className="w-3.5 h-3.5" /> Add Flour Type
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* ================= SECTION 4: LIVE FORMULA TABLE ================= */}
+                    <div className="space-y-3 pt-1">
+                      <div className="flex justify-between items-center px-1">
+                        <h2 className="font-serif italic text-xs uppercase tracking-[0.22em] text-ink">Live Formula Breakdown</h2>
+                        {calcLoaves > 1 && <span className="font-mono text-xs text-terracotta font-semibold">× {calcLoaves} Loaves</span>}
+                      </div>
+
+                      <div className="bg-card rounded-[20px] shadow-card border border-border-card overflow-hidden">
+                        <div className="p-[17px] space-y-3">
+                          {itemizedFlourRows.map((row) => (
+                            <div key={row.id} className="flex items-baseline w-full">
+                              <span className="font-serif text-[15px] text-ink whitespace-nowrap">{row.name}</span>
+                              <div className="flex-1 border-b-[1.5px] border-dotted border-border-leader mx-2 relative top-[-4px]"></div>
+                              <div className="flex items-baseline gap-2 text-right min-w-[85px]">
+                                <span className="font-sans text-[15px] font-bold text-ink">{row.grams}<span className="text-faint text-[10px] ml-0.5">g</span></span>
+                                <span className="font-mono text-[12px] text-muted w-10">{row.bakersPct}%</span>
+                              </div>
+                            </div>
+                          ))}
+
+                          <div className="flex items-baseline w-full">
+                            <span className="font-serif text-[15px] text-ink whitespace-nowrap">Starter Flour</span>
+                            <div className="flex-1 border-b-[1.5px] border-dotted border-border-leader mx-2 relative top-[-4px]"></div>
+                            <div className="flex items-baseline gap-2 text-right min-w-[85px]">
+                              <span className="font-sans text-[15px] font-bold text-ink">{computedStarterFlour}<span className="text-faint text-[10px] ml-0.5">g</span></span>
+                              <span className="font-mono text-[12px] text-muted w-10">{calcFlour > 0 ? Math.round((computedStarterFlour / (calcFlour * calcLoaves)) * 1000) / 10 : 0}%</span>
+                            </div>
+                          </div>
+
+                          <div className="flex items-baseline w-full">
+                            <span className="font-serif text-[15px] text-ink whitespace-nowrap">Main Water</span>
+                            <div className="flex-1 border-b-[1.5px] border-dotted border-border-leader mx-2 relative top-[-4px]"></div>
+                            <div className="flex items-baseline gap-2 text-right min-w-[85px]">
+                              <span className="font-sans text-[15px] font-bold text-ink">{mainWaterGrams}<span className="text-faint text-[10px] ml-0.5">g</span></span>
+                              <span className="font-mono text-[12px] text-muted w-10">{calcFlour > 0 ? Math.round((mainWaterGrams / (calcFlour * calcLoaves)) * 1000) / 10 : 0}%</span>
+                            </div>
+                          </div>
+
+                          <div className="flex items-baseline w-full">
+                            <span className="font-serif text-[15px] text-ink whitespace-nowrap">Starter Water</span>
+                            <div className="flex-1 border-b-[1.5px] border-dotted border-border-leader mx-2 relative top-[-4px]"></div>
+                            <div className="flex items-baseline gap-2 text-right min-w-[85px]">
+                              <span className="font-sans text-[15px] font-bold text-ink">{computedStarterWater}<span className="text-faint text-[10px] ml-0.5">g</span></span>
+                              <span className="font-mono text-[12px] text-muted w-10">{calcFlour > 0 ? Math.round((computedStarterWater / (calcFlour * calcLoaves)) * 1000) / 10 : 0}%</span>
+                            </div>
+                          </div>
+
+                          <div className="flex items-baseline w-full">
+                            <span className="font-serif text-[15px] text-ink whitespace-nowrap">Salt</span>
+                            <div className="flex-1 border-b-[1.5px] border-dotted border-border-leader mx-2 relative top-[-4px]"></div>
+                            <div className="flex items-baseline gap-2 text-right min-w-[85px]">
+                              <span className="font-sans text-[15px] font-bold text-ink">{totalSaltGrams}<span className="text-faint text-[10px] ml-0.5">g</span></span>
+                              <span className="font-mono text-[12px] text-muted w-10">{calcSalt}%</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="bg-terracotta px-[17px] py-3.5 flex justify-between items-center text-onDark">
+                          <span className="font-serif italic text-[15px] text-onDark">Total dough</span>
+                          <div className="flex items-baseline gap-3">
+                            <span className="font-sans text-[17px] font-extrabold text-onDark">{totalDoughGrams} g</span>
+                            <span className="font-mono text-[13px] text-onDark/85">{totalDoughPct} %</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Launch Active Bake Button */}
+                    <div className="pt-2 pb-6">
+                      <button
+                        onClick={() => {
+                          const newBake = {
+                            id: Date.now(),
+                            title: starterInputMode === 'diary' && selectedStarterEntity ? `${selectedStarterEntity.name} Loaf` : 'Country Sourdough',
+                            stage: 'autolyse',
+                            loaves: calcLoaves,
+                            hydration: calcHydration,
+                            totalFlour: calcFlour,
+                            starterGrams: computedTotalStarter,
+                            starterId: starterInputMode === 'diary' ? selectedStarterId : undefined,
+                            foldsCompleted: 0,
+                            totalFolds: 4,
+                            timerTargetEnd: Date.now() + 30 * 60 * 1000,
+                            timerDuration: 30 * 60,
+                            timerRunning: true,
+                            flourBlend: [...flourBlend],
+                            timeline: [
+                              { id: `t-${Date.now()}`, time: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }), text: `Created bake with ${calcHydration}% hydration & ${calcLoaves} loaf` }
+                            ]
+                          };
+                          setActiveBakes(prev => [newBake, ...prev]);
+                          setIsBuildingRecipe(false);
+                          playKitchenChime();
+                        }}
+                        className="w-full bg-terracotta hover:bg-primary text-white rounded-[16px] py-3.5 px-5 flex items-center justify-center gap-2 shadow-btnTerracotta active:scale-98 transition-all font-sans font-semibold text-[15px]"
+                      >
+                        <span>Create Bake Session</span>
+                        <LucideIcon name="arrow-right" className="w-5 h-5" />
+                      </button>
+                    </div>
+                  </div>
+                ) : activeBakes.length === 0 ? (
+                  /* 1B: EMPTY STATE */
+                  <div className="py-12 px-6 flex flex-col items-center justify-center bg-card rounded-[20px] border border-border-card shadow-card text-center space-y-4">
+                    <div className="w-16 h-16 rounded-full bg-linen flex items-center justify-center text-terracotta border border-border-field">
+                      <LucideIcon name="scale" className="w-7 h-7" />
+                    </div>
+                    <h2 className="font-serif text-2xl font-semibold text-ink">No Session Active</h2>
+                    <p className="font-sans text-xs text-muted max-w-xs leading-relaxed">
+                      Your proofing baskets are empty. Ready to calculate hydration and start a fresh loaf?
+                    </p>
+                    <button
+                      onClick={() => setIsBuildingRecipe(true)}
+                      className="bg-terracotta hover:bg-primary text-white font-sans font-semibold text-sm uppercase tracking-wider py-3.5 px-6 rounded-[16px] shadow-btnTerracotta flex items-center gap-2 active:scale-95 transition-all"
+                    >
+                      <span>Start New Bake</span>
+                      <LucideIcon name="plus" className="w-4 h-4" />
+                    </button>
+                  </div>
+                ) : (
+                  /* 1C: ACTIVE BAKES LIST & TIMERS */
+                  <div className="space-y-6">
+                    <div className="flex justify-between items-center px-1">
+                      <span className="font-sans text-xs text-muted">
+                        {activeBakes.length} Active {activeBakes.length === 1 ? 'Loaf' : 'Loaves'}
+                      </span>
+                      <button
+                        onClick={() => setIsBuildingRecipe(true)}
+                        className="text-terracotta font-sans text-xs font-bold uppercase tracking-wider flex items-center gap-1 hover:opacity-80"
+                      >
+                        <LucideIcon name="plus" className="w-3.5 h-3.5" /> Start Another Loaf
+                      </button>
+                    </div>
+
+                    {activeBakes.map((bake) => {
+                      const secondsLeft = bake.timerTargetEnd ? Math.max(0, Math.round((bake.timerTargetEnd - now) / 1000)) : 0;
+                      const formattedTimer = formatTimeRemaining(secondsLeft);
+
+                      return (
+                        <div key={bake.id} className="flex flex-col bg-card rounded-[20px] border border-border-card shadow-[0_8px_24px_rgba(51,48,42,0.06),inset_0_1px_0_rgba(255,255,255,1)] overflow-hidden">
+                          <div className="p-[17px] pb-3 bg-card border-b border-border-card">
+                            <div className="w-full flex items-center gap-1.5 mb-3">
+                              <div className="h-1.5 flex-1 rounded-full bg-terracotta"></div>
+                              <div className={`h-1.5 flex-1 rounded-full ${bake.stage !== 'autolyse' ? 'bg-terracotta' : 'bg-border-card'}`}></div>
+                              <div className="h-1.5 flex-1 rounded-full bg-border-card"></div>
+                              <div className="h-1.5 flex-1 rounded-full bg-border-card"></div>
+                              <div className="h-1.5 flex-1 rounded-full bg-border-card"></div>
+                            </div>
+                            <div className="flex justify-between items-start">
+                              <div>
+                                <span className="font-serif italic text-xs uppercase tracking-[0.22em] text-muted block mb-0.5">
+                                  {bake.stage === 'autolyse' ? 'Autolyse Stage' : 'Stretch & Folds'}
+                                </span>
+                                <h2 className="font-serif text-[22px] font-semibold text-ink leading-tight">{bake.title}</h2>
+                                <p className="font-sans text-xs text-muted mt-0.5">{bake.loaves} loaf · {bake.hydration}% hydration · {bake.totalFlour}g flour</p>
+                              </div>
+
+                              <div className="bg-linen border border-terracotta/30 px-3 py-1.5 rounded-xl flex flex-col items-end">
+                                <span className="font-sans text-[9px] uppercase font-bold text-faint tracking-wider">Timer</span>
+                                <span className="font-mono text-base font-bold text-terracotta tracking-tight">{formattedTimer}</span>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="p-[17px] space-y-5">
+                            {bake.stage === 'autolyse' && (
+                              <div className="bg-oat p-4 rounded-xl border border-border-field space-y-3">
+                                <h3 className="font-serif text-base font-semibold text-ink">
+                                  Autolyse in progress. Ready for the next stage?
+                                </h3>
+                                <div className="flex flex-col gap-2">
+                                  <button
+                                    onClick={() => {
+                                      const newTarget = (bake.timerTargetEnd || Date.now()) + 15 * 60 * 1000;
+                                      setActiveBakes(prev => prev.map(b => b.id === bake.id ? {
+                                        ...b,
+                                        timerTargetEnd: newTarget,
+                                        timeline: [...b.timeline, { id: `t-${Date.now()}`, time: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }), text: 'Autolyse extended (+15m)' }]
+                                      } : b));
+                                      playKitchenChime();
+                                    }}
+                                    className="w-full py-2.5 border-2 border-ink text-ink font-sans font-semibold text-xs uppercase tracking-wider rounded-[11px] hover:bg-linen active:scale-98 transition-all"
+                                  >
+                                    + Add 15m extra time
+                                  </button>
+                                  <button
+                                    onClick={() => {
+                                      setActiveBakes(prev => prev.map(b => b.id === bake.id ? {
+                                        ...b,
+                                        stage: 'stretch_folds',
+                                        timeline: [...b.timeline, { id: `t-${Date.now()}`, time: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }), text: 'Advanced to Stretch & Folds' }]
+                                      } : b));
+                                      playKitchenChime();
+                                    }}
+                                    className="w-full py-2.5 bg-ink text-onDark font-sans font-semibold text-xs uppercase tracking-wider rounded-[11px] flex items-center justify-center gap-2 shadow-btnInk active:scale-98 transition-all"
+                                  >
+                                    <span>Advance to Stretch & Folds</span>
+                                    <LucideIcon name="arrow-right" className="w-4 h-4" />
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+
+                            <div className="space-y-2">
+                              <div className="flex justify-between items-center">
+                                <h3 className="font-sans text-[11px] uppercase font-bold text-muted tracking-wider">Stretch & Folds</h3>
+                                <span className="font-mono text-xs font-bold text-terracotta">{bake.foldsCompleted} / {bake.totalFolds}</span>
+                              </div>
+                              <div className="flex gap-2">
+                                {[1, 2, 3, 4].map(idx => (
+                                  <div
+                                    key={idx}
+                                    className={`h-2 flex-1 rounded-full transition-all ${
+                                      idx <= bake.foldsCompleted ? 'bg-terracotta shadow-sm' : 'bg-border-field border border-border-card'
+                                    }`}
+                                  />
+                                ))}
+                              </div>
+                              {bake.foldsCompleted < bake.totalFolds && (
+                                <button
+                                  onClick={() => {
+                                    const nextFolds = bake.foldsCompleted + 1;
+                                    setActiveBakes(prev => prev.map(b => b.id === bake.id ? {
+                                      ...b,
+                                      foldsCompleted: nextFolds,
+                                      timeline: [...b.timeline, { id: `t-${Date.now()}`, time: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }), text: `Stretch & fold ${nextFolds} of 4 logged` }]
+                                    } : b));
+                                    playKitchenChime();
+                                  }}
+                                  className="w-full mt-2 py-2 bg-oat hover:bg-linen border border-border-field rounded-[11px] text-xs font-sans font-semibold text-ink flex items-center justify-center gap-1.5 transition-all"
+                                >
+                                  <LucideIcon name="check-circle" className="w-4 h-4 text-terracotta" />
+                                  Log Fold #{bake.foldsCompleted + 1}
+                                </button>
+                              )}
+                            </div>
+
+                            <div className="bg-linen p-3.5 rounded-xl border border-border-card flex items-center gap-4">
+                              <div className="relative w-14 h-14 flex items-center justify-center flex-shrink-0">
+                                <svg className="w-full h-full transform -rotate-90" viewBox="0 0 36 36">
+                                  <circle className="text-border-field" strokeWidth="3.5" stroke="currentColor" fill="transparent" r="16" cx="18" cy="18" />
+                                  <circle className="text-terracotta" strokeWidth="3.5" strokeDasharray="100" strokeDashoffset="45" strokeLinecap="round" stroke="currentColor" fill="transparent" r="16" cx="18" cy="18" />
+                                </svg>
+                                <span className="absolute font-mono text-[11px] font-bold text-ink">55%</span>
+                              </div>
+                              <div className="flex-1">
+                                <div className="flex items-center gap-1">
+                                  <LucideIcon name="thermometer" className="w-3.5 h-3.5 text-terracotta" />
+                                  <h4 className="font-serif text-sm font-semibold text-ink">Bulk Fermentation</h4>
+                                </div>
+                                <p className="font-sans text-xs text-muted mt-0.5">Est. finish at 4:30 PM (60% rise target @ 23°C)</p>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="p-[17px] pt-4 border-t border-border-card bg-card/60">
+                            <h4 className="font-sans text-[10px] text-faint uppercase font-bold tracking-wider mb-3 flex items-center gap-1.5">
+                              <LucideIcon name="clock" className="w-3.5 h-3.5 text-muted" /> Activity Timeline
+                            </h4>
+                            <div className="flex flex-col gap-3 relative ml-2">
+                              <div className="absolute left-0 top-2 bottom-2 w-px border-l border-dashed border-border-leader"></div>
+                              {bake.timeline.map((item) => (
+                                <div key={item.id} className="relative pl-5 flex flex-col">
+                                  <div className="absolute left-[-4px] top-1.5 w-2 h-2 rounded-full bg-terracotta ring-2 ring-card"></div>
+                                  <span className="font-mono text-[11px] font-bold text-olive">{item.time}</span>
+                                  <span className="font-sans text-[12px] text-muted">{item.text}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+
+                          <div className="bg-oat border-t border-border-card px-4 py-3 flex justify-between items-center">
+                            <button
+                              onClick={() => {
+                                setHistory(prev => [{
+                                  id: Date.now(),
+                                  date: 'Today',
+                                  title: bake.title,
+                                  rating: 5,
+                                  hydration: bake.hydration,
+                                  totalFlour: bake.totalFlour,
+                                  starterGrams: bake.starterGrams || 100,
+                                  starterId: bake.starterId,
+                                  flourBlend: bake.flourBlend,
+                                  notes: 'Finished loaf with golden blistered crust.'
+                                }, ...prev]);
+                                setActiveBakes(prev => prev.filter(b => b.id !== bake.id));
+                                playKitchenChime();
+                              }}
+                              className="font-sans font-semibold text-xs text-terracotta hover:opacity-80 flex items-center gap-1"
+                            >
+                              <LucideIcon name="check-circle" className="w-4 h-4" /> Mark Bake Complete
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* ================= TAB 2: BAKE HISTORY ================= */}
+            {activeTab === 'history' && (
+              <div className="space-y-5 animate-fadeIn">
+                {!user ? (
+                  <div className="bg-card rounded-[20px] border border-border-card shadow-card p-6 text-center space-y-5">
+                    <div className="w-14 h-14 rounded-full bg-linen flex items-center justify-center text-terracotta border border-border-field mx-auto">
+                      <LucideIcon name="lock" className="w-6 h-6" />
+                    </div>
+                    <div className="space-y-1.5">
+                      <span className="font-serif italic text-xs uppercase tracking-[0.22em] text-terracotta">Member Feature</span>
+                      <h2 className="font-serif text-2xl font-semibold text-ink">Unlock Your Cloud Bake History</h2>
+                      <p className="font-sans text-xs text-muted max-w-xs mx-auto leading-relaxed">
+                        Keep a permanent record of every loaf, crumb texture ratings, tasting notes, and clone previous successful formulas.
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => setIsWelcomeOpen(true)}
+                      className="w-full bg-terracotta hover:bg-primary text-white font-sans font-semibold text-sm py-3.5 px-5 rounded-[16px] shadow-btnTerracotta active:scale-98 transition-all"
+                    >
+                      Sign In with Google or Email
+                    </button>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {history.map(item => (
+                      <div key={item.id} className="bg-card rounded-[20px] shadow-card border border-border-card overflow-hidden">
+                        <div className="p-[17px]">
+                          <div className="flex justify-between items-start mb-3">
+                            <div>
+                              <h3 className="font-serif text-[17px] font-semibold text-ink">{item.title}</h3>
+                              <p className="font-sans text-[10px] text-faint uppercase tracking-wider mt-0.5">{item.date}</p>
+                            </div>
+                            <div className="flex gap-0.5 text-warning">
+                              {[1, 2, 3, 4, 5].map(star => (
+                                <LucideIcon
+                                  key={star}
+                                  name="star"
+                                  className={`w-4 h-4 ${star <= item.rating ? 'fill-warning text-warning' : 'text-border-field'}`}
+                                />
+                              ))}
+                            </div>
+                          </div>
+
+                          <div className="flex flex-col gap-2 mb-2">
+                            <div className="flex justify-between items-baseline border-b border-dotted border-border-leader pb-1">
+                              <span className="font-sans text-xs text-muted">Hydration</span>
+                              <span className="font-mono text-xs font-bold text-olive">{item.hydration}%</span>
+                            </div>
+                            <div className="flex justify-between items-baseline border-b border-dotted border-border-leader pb-1">
+                              <span className="font-sans text-xs text-muted">Total Flour</span>
+                              <span className="font-sans text-xs font-bold text-ink">{item.totalFlour}g</span>
+                            </div>
+                            <div className="flex justify-between items-baseline border-b border-dotted border-border-leader pb-1">
+                              <span className="font-sans text-xs text-muted">Starter</span>
+                              <span className="font-sans text-xs font-bold text-ink">{item.starterGrams ? `${item.starterGrams}g` : '100g'}</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="bg-oat px-[17px] py-3 flex justify-between items-center border-t border-border-card">
+                          <span className="font-serif italic text-xs text-muted line-clamp-1">"{item.notes}"</span>
+                          <button
+                            onClick={() => handleCloneBake(item)}
+                            className="flex items-center gap-1 font-sans text-xs font-semibold text-terracotta ml-3 whitespace-nowrap active:opacity-70 transition-opacity"
+                          >
+                            <span>Clone to New Bake</span>
+                            <LucideIcon name="copy" className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* ================= TAB 3: STARTER DIARY ================= */}
+            {activeTab === 'diary' && (
+              <div className="space-y-6 animate-fadeIn">
+                {!user ? (
+                  <div className="bg-card rounded-[20px] border border-border-card shadow-card p-6 text-center space-y-5">
+                    <div className="w-14 h-14 rounded-full bg-linen flex items-center justify-center text-terracotta border border-border-field mx-auto">
+                      <LucideIcon name="lock" className="w-6 h-6" />
+                    </div>
+                    <div className="space-y-1.5">
+                      <span className="font-serif italic text-xs uppercase tracking-[0.22em] text-terracotta">Member Feature</span>
+                      <h2 className="font-serif text-2xl font-semibold text-ink">Unlock Your Personal Starter Diary</h2>
+                      <p className="font-sans text-xs text-muted max-w-xs mx-auto leading-relaxed">
+                        Name your sourdough starters, record feedings, track peak rise hours, and calculate levain builds.
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => setIsWelcomeOpen(true)}
+                      className="w-full bg-terracotta hover:bg-primary text-white font-sans font-semibold text-sm py-3.5 px-5 rounded-[16px] shadow-btnTerracotta active:scale-98 transition-all"
+                    >
+                      Sign In with Google or Email
+                    </button>
+                  </div>
+                ) : (
+                  <div className="space-y-6">
+                    <section className="space-y-4">
+                      <div className="flex justify-between items-center">
+                        <h2 className="font-serif italic text-xs uppercase tracking-[0.22em] text-muted">My Starters</h2>
+                        <button
+                          onClick={() => handleOpenFeedModal(starters[0])}
+                          className="bg-ink text-onDark shadow-btnInk rounded-[16px] px-3 py-1.5 flex items-center gap-1 font-sans text-[11px] uppercase font-bold tracking-widest active:scale-95"
+                        >
+                          <LucideIcon name="plus" className="w-3.5 h-3.5" /> Log Feed
+                        </button>
+                      </div>
+
+                      {starters.map(starter => (
+                        <div key={starter.id} className="bg-card rounded-[20px] p-[17px] shadow-card border border-border-card relative overflow-hidden flex flex-col gap-4">
+                          <div className="flex justify-between items-start">
+                            <div>
+                              <h3 className="font-serif text-[22px] font-semibold text-ink">{starter.name}</h3>
+                              <p className="font-sans text-xs text-muted mt-0.5">{starter.hydration}% Hydration • {starter.flourType}</p>
+                            </div>
+                            <button
+                              onClick={() => handleOpenFeedModal(starter)}
+                              className={`px-3 py-1 rounded-full flex items-center gap-1.5 border transition-transform active:scale-95 ${
+                                starter.status === 'active_peak' ? 'bg-terracotta/10 text-terracotta border-terracotta/20' : 'bg-warning/10 text-warning border-warning/20'
+                              }`}
+                            >
+                              <LucideIcon name={starter.status === 'active_peak' ? 'flame' : 'utensils'} className="w-3.5 h-3.5" />
+                              <span className="font-sans text-[10px] uppercase font-bold tracking-wider">
+                                {starter.status === 'active_peak' ? 'Active & Peak' : 'Hungry'}
+                              </span>
+                            </button>
+                          </div>
+
+                          <div className="border-t border-dashed border-border-card pt-3 flex justify-between">
+                            <div className="flex flex-col">
+                              <span className="font-sans text-[10px] text-faint uppercase font-bold tracking-wider mb-0.5">Last Fed</span>
+                              <span className="font-sans text-sm font-bold text-ink">{starter.lastFedText}</span>
+                            </div>
+                            <div className="flex flex-col">
+                              <span className="font-sans text-[10px] text-faint uppercase font-bold tracking-wider mb-0.5">Ratio</span>
+                              <span className="font-mono text-sm font-bold text-ink">{starter.lastRatio}</span>
+                            </div>
+                            <div className="flex flex-col">
+                              <span className="font-sans text-[10px] text-faint uppercase font-bold tracking-wider mb-0.5">Status</span>
+                              <span className={`font-sans text-sm font-bold ${starter.status === 'active_peak' ? 'text-olive' : 'text-danger'}`}>
+                                {starter.status === 'active_peak' ? 'Ready' : 'Feed Due'}
+                              </span>
+                            </div>
+                          </div>
+
+                          <div className="w-full bg-oat border border-border-field rounded-full h-2 overflow-hidden">
+                            <div className={`h-full rounded-full ${starter.status === 'active_peak' ? 'bg-terracotta w-[85%]' : 'bg-warning w-[25%]'}`} />
+                          </div>
+                        </div>
+                      ))}
+                    </section>
+
+                    {/* Target Levain Calculator */}
+                    <section className="space-y-4 pt-2">
+                      <div className="flex items-center gap-2">
+                        <LucideIcon name="calculator" className="w-4 h-4 text-terracotta" />
+                        <h2 className="font-serif italic text-xs uppercase tracking-[0.22em] text-muted">
+                          Target Levain Calculator ({levainRatio})
+                        </h2>
+                      </div>
+
+                      <div className="bg-linen rounded-[20px] p-[17px] border border-border-card flex flex-col gap-4 relative overflow-hidden">
+                        <div className="flex justify-between items-end gap-3">
+                          <div className="space-y-1 flex-1">
+                            <label className="font-sans text-[10px] text-faint uppercase font-bold tracking-wider block">Target Weight (g)</label>
+                            <div className="relative">
+                              <input
+                                type="number"
+                                value={levainTarget}
+                                onChange={(e) => setLevainTarget(Math.max(0, Number(e.target.value) || 0))}
+                                className="w-full bg-oat border border-border-field rounded-[11px] px-3 py-2 font-mono text-[17px] font-bold text-ink focus:outline-none text-right pr-8"
+                              />
+                              <span className="absolute right-3 top-1/2 -translate-y-1/2 font-sans text-xs text-muted">g</span>
+                            </div>
+                          </div>
+
+                          <div className="space-y-1">
+                            <label className="font-sans text-[10px] text-faint uppercase font-bold tracking-wider block">Ratio</label>
+                            <select
+                              value={levainRatio}
+                              onChange={(e) => setLevainRatio(e.target.value)}
+                              className="bg-oat border border-border-field rounded-[11px] px-2.5 py-2 font-mono text-xs font-bold text-ink focus:outline-none"
+                            >
+                              <option value="1:1:1">1:1:1 (Fast)</option>
+                              <option value="1:2:2">1:2:2 (Standard)</option>
+                              <option value="1:3:3">1:3:3 (Slow)</option>
+                              <option value="1:4:4">1:4:4</option>
+                              <option value="1:5:5">1:5:5 (Overnight)</option>
+                            </select>
+                          </div>
+                        </div>
+
+                        <div className="flex flex-col gap-2.5 pt-1">
+                          <div className="flex items-baseline w-full">
+                            <span className="font-serif text-[15px] text-ink whitespace-nowrap">Starter Seed</span>
+                            <div className="flex-1 border-b-[1.5px] border-dotted border-border-leader mx-2 relative top-[-4px]"></div>
+                            <span className="font-sans text-[15px] font-bold text-ink mr-1">{ratioParts.seed}</span>
+                            <span className="font-sans text-[11px] text-faint">g</span>
+                          </div>
+                          <div className="flex items-baseline w-full">
+                            <span className="font-serif text-[15px] text-ink whitespace-nowrap">Flour</span>
+                            <div className="flex-1 border-b-[1.5px] border-dotted border-border-leader mx-2 relative top-[-4px]"></div>
+                            <span className="font-sans text-[15px] font-bold text-ink mr-1">{ratioParts.flour}</span>
+                            <span className="font-sans text-[11px] text-faint">g</span>
+                          </div>
+                          <div className="flex items-baseline w-full">
+                            <span className="font-serif text-[15px] text-ink whitespace-nowrap">Water</span>
+                            <div className="flex-1 border-b-[1.5px] border-dotted border-border-leader mx-2 relative top-[-4px]"></div>
+                            <span className="font-sans text-[15px] font-bold text-ink mr-1">{ratioParts.water}</span>
+                            <span className="font-sans text-[11px] text-faint">g</span>
+                          </div>
+                        </div>
+
+                        <div className="-mx-[17px] -mb-[17px] bg-terracotta text-onDark p-3.5 px-[17px] flex justify-between items-center">
+                          <span className="font-serif italic text-sm text-onDark">Total Build</span>
+                          <div className="flex items-baseline gap-1">
+                            <span className="font-mono font-bold text-base text-onDark">{ratioParts.seed + ratioParts.flour + ratioParts.water}</span>
+                            <span className="font-sans text-xs text-onDark/75">g</span>
+                          </div>
+                        </div>
+                      </div>
+                    </section>
+                  </div>
+                )}
+              </div>
+            )}
+          </main>
+
+          {/* Streamlined 3-Tab Bottom Navigation Bar */}
+          <nav className="fixed bottom-0 w-full z-40 bg-card/95 backdrop-blur-xl border-t border-border-card shadow-[0_-4px_16px_rgba(51,48,42,0.04)] pb-[max(1.25rem,env(safe-area-inset-bottom))]">
+            <div className="max-w-lg mx-auto flex justify-around items-center h-16 px-4">
+              {[
+                { id: 'active', label: 'Active', icon: 'timer', badge: activeBakes.length },
+                { id: 'history', label: 'History', icon: 'scroll-text' },
+                { id: 'diary', label: 'Diary', icon: 'wheat' },
+              ].map(tab => (
+                <button
+                  key={tab.id}
+                  onClick={() => {
+                    setActiveTab(tab.id);
+                  }}
+                  className={`flex-1 flex flex-col items-center justify-center gap-1 transition-all active:scale-95 relative py-1 ${
+                    activeTab === tab.id ? 'text-terracotta' : 'text-disabled hover:text-muted'
+                  }`}
+                >
+                  <div className="relative">
+                    <LucideIcon name={tab.icon} className="w-5 h-5" strokeWidth={activeTab === tab.id ? 2.3 : 1.8} />
+                    {tab.badge > 0 && activeTab !== tab.id && (
+                      <span className="absolute -top-1.5 -right-2.5 bg-terracotta text-white font-sans text-[10px] font-bold rounded-full w-4 h-4 flex items-center justify-center shadow-sm">
+                        {tab.badge}
+                      </span>
+                    )}
+                  </div>
+                  <span className={`font-sans text-[10px] uppercase tracking-widest ${activeTab === tab.id ? 'font-bold' : 'font-medium'}`}>
+                    {tab.label}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </nav>
+
+          {/* Onboarding Welcome Modal */}
+          {isWelcomeOpen && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-ink/40 backdrop-blur-sm animate-fadeIn">
+              <div className="bg-card w-full max-w-md rounded-[20px] border border-border-card shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+                <div className="p-5 pb-3 flex justify-between items-start border-b border-border-field/40">
+                  <div>
+                    <span className="font-serif italic text-xs uppercase tracking-[0.22em] text-terracotta block mb-1">Sourdough Calculator</span>
+                    <h2 className="font-serif text-[22px] font-semibold text-ink leading-tight">Hey, welcome to your sourdough calculator</h2>
+                  </div>
+                  <button onClick={handleCloseWelcome} className="text-muted hover:text-ink p-1">
+                    <LucideIcon name="x" className="w-5 h-5" />
+                  </button>
+                </div>
+
+                <div className="p-5 overflow-y-auto space-y-5 flex-1">
+                  {/* Sign In Box */}
+                  <div className="bg-linen p-4 rounded-xl border border-border-card space-y-3">
+                    <div className="flex items-center gap-2">
+                      <LucideIcon name="shield-check" className="w-4 h-4 text-terracotta" />
+                      <h3 className="font-sans text-xs uppercase font-bold text-ink tracking-wider">Member Cloud Sync & Starter Diary</h3>
+                    </div>
+                    <p className="font-sans text-xs text-muted">
+                      Sign in to save your named starters, track feeding health, and keep permanent crumb journals.
+                    </p>
+                    <button
+                      onClick={() => handleSignIn('gabrieljohnpersonal@gmail.com')}
+                      className="w-full bg-card hover:bg-oat border border-border-field text-ink font-sans font-semibold text-xs py-2.5 px-4 rounded-[11px] shadow-sm flex items-center justify-center gap-2 transition-all active:scale-98"
+                    >
+                      <svg className="w-4 h-4" viewBox="0 0 24 24">
+                        <path fill="#4285F4" d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.66-5.17 3.66-9.17z"/>
+                        <path fill="#34A853" d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.1-6.72-4.93H1.25v3.15C3.26 21.36 7.34 24 12 24z"/>
+                        <path fill="#FBBC05" d="M5.28 14.27c-.25-.72-.38-1.49-.38-2.27s.13-1.55.38-2.27V6.58H1.25C.45 8.17 0 9.99 0 12s.45 3.83 1.25 5.42l4.03-3.15z"/>
+                        <path fill="#EA4335" d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.34 0 3.26 2.64 1.25 6.58l4.03 3.15c.95-2.83 3.6-4.98 6.72-4.98z"/>
+                      </svg>
+                      Continue with Google
+                    </button>
+                  </div>
+
+                  {/* Action Launchpad */}
+                  <div className="space-y-2">
+                    <span className="font-sans text-[10px] uppercase font-bold text-faint tracking-wider block">Choose an action to get started:</span>
+                    <button
+                      onClick={() => { setActiveTab('active'); setIsBuildingRecipe(true); handleCloseWelcome(); }}
+                      className="w-full bg-oat hover:bg-linen border border-border-field rounded-xl p-3 flex items-center justify-between text-left transition-all active:scale-98"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 rounded-lg bg-card border border-border-card flex items-center justify-center text-terracotta">
+                          <LucideIcon name="scale" className="w-4 h-4" />
+                        </div>
+                        <div>
+                          <h4 className="font-serif font-semibold text-sm text-ink">Start a New Bake</h4>
+                          <p className="font-sans text-xs text-muted">Calculate hydration, flour blends & salt</p>
+                        </div>
+                      </div>
+                      <LucideIcon name="arrow-right" className="w-4 h-4 text-faint" />
+                    </button>
+
+                    <button
+                      onClick={() => { setActiveTab('diary'); handleCloseWelcome(); }}
+                      className="w-full bg-oat hover:bg-linen border border-border-field rounded-xl p-3 flex items-center justify-between text-left transition-all active:scale-98"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 rounded-lg bg-card border border-border-card flex items-center justify-center text-terracotta">
+                          <LucideIcon name="wheat" className="w-4 h-4" />
+                        </div>
+                        <div>
+                          <h4 className="font-serif font-semibold text-sm text-ink">Starter Diary</h4>
+                          <p className="font-sans text-xs text-muted">Track named starters & levain feeding ratios</p>
+                        </div>
+                      </div>
+                      <LucideIcon name="arrow-right" className="w-4 h-4 text-faint" />
+                    </button>
+                  </div>
+
+                  {/* Banner Slot */}
+                  <div className="bg-linen p-3 rounded-xl border border-terracotta/20 flex items-center gap-3">
+                    <LucideIcon name="tag" className="w-5 h-5 text-terracotta flex-shrink-0" />
+                    <div className="flex-1">
+                      <span className="font-sans text-[10px] uppercase font-bold text-terracotta tracking-wider block">Bakery Spotlight</span>
+                      <p className="font-sans text-xs text-ink">Get 15% off Rattan Proofing Baskets with code <strong className="font-mono">CRUST15</strong></p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="p-4 bg-oat border-t border-border-field">
+                  <button
+                    onClick={handleCloseWelcome}
+                    className="w-full bg-ink text-onDark py-3 rounded-[16px] font-sans font-semibold text-sm shadow-btnInk text-center active:scale-98 transition-transform"
+                  >
+                    Get Baking
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Feed Modal */}
+          {selectedFeedStarter && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-ink/40 backdrop-blur-sm animate-fadeIn">
+              <div className="bg-card max-w-sm w-full rounded-[20px] border border-border-card p-5 space-y-4 shadow-xl">
+                <div className="flex justify-between items-start">
+                  <div>
+                    <span className="font-serif italic text-xs uppercase text-terracotta">Log Feed</span>
+                    <h3 className="font-serif text-lg font-semibold text-ink">{selectedFeedStarter.name}</h3>
+                    <p className="font-sans text-[11px] text-muted">{selectedFeedStarter.hydration}% Hydration · {selectedFeedStarter.flourType}</p>
+                  </div>
+                  <button onClick={() => setSelectedFeedStarter(null)} className="text-muted hover:text-ink">
+                    <LucideIcon name="x" className="w-5 h-5" />
+                  </button>
+                </div>
+
+                <div className="space-y-3">
+                  <div className="grid grid-cols-3 gap-2">
+                    <div>
+                      <label className="text-[10px] text-faint uppercase font-bold font-sans">Seed (g)</label>
+                      <input
+                        type="number"
+                        value={feedSeedGrams}
+                        onChange={(e) => setFeedSeedGrams(Number(e.target.value) || 0)}
+                        className="w-full bg-oat border border-border-field rounded-[11px] p-2 text-center font-mono font-bold text-xs"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-faint uppercase font-bold font-sans">Flour (g)</label>
+                      <input
+                        type="number"
+                        value={feedFlourGrams}
+                        onChange={(e) => setFeedFlourGrams(Number(e.target.value) || 0)}
+                        className="w-full bg-oat border border-border-field rounded-[11px] p-2 text-center font-mono font-bold text-xs"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-faint uppercase font-bold font-sans">Water (g)</label>
+                      <input
+                        type="number"
+                        value={feedWaterGrams}
+                        onChange={(e) => setFeedWaterGrams(Number(e.target.value) || 0)}
+                        className="w-full bg-oat border border-border-field rounded-[11px] p-2 text-center font-mono font-bold text-xs"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="text-[10px] text-faint uppercase font-bold font-sans">Notes / Aroma</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. Doubled in 4h, sweet yeasty aroma"
+                      value={feedNotes}
+                      onChange={(e) => setFeedNotes(e.target.value)}
+                      className="w-full bg-oat border border-border-field rounded-[11px] p-2 text-xs font-sans"
+                    />
+                  </div>
+
+                  <button
+                    onClick={() => {
+                      const minP = Math.min(feedSeedGrams, feedFlourGrams, feedWaterGrams) || 1;
+                      const ratioStr = `${Math.round(feedSeedGrams/minP)}:${Math.round(feedFlourGrams/minP)}:${Math.round(feedWaterGrams/minP)}`;
+                      setStarters(prev => prev.map(s => s.id === selectedFeedStarter.id ? {
+                        ...s,
+                        lastFedText: 'Just now',
+                        lastRatio: ratioStr,
+                        status: 'active_peak',
+                      } : s));
+                      setSelectedFeedStarter(null);
+                      playKitchenChime();
+                    }}
+                    className="w-full bg-terracotta hover:bg-primary text-white py-3 rounded-[16px] font-sans font-semibold text-xs shadow-btnTerracotta active:scale-98 transition-all"
+                  >
+                    Save Feed & Start Rise Timer
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
