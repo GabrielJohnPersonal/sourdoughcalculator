@@ -4,6 +4,45 @@ This document tracks all user-requested design decisions, feature iterations, an
 
 ---
 
+## [2026-08-28] — Recipe Matrix UI Refactor, Dual-Mode Feed Engine & Interactive Loaf Journal
+
+### 🧹 1. Global Navigation & Header Polish
+* **Removed Redundant Header Button**:
+  * Eliminated the confusing "Sleep" button from the top navigation bar, creating a clean header with the page title and user profile/auth avatar.
+
+### 🌾 2. Recipe Builder & Flour Blend Matrix
+* **Flour Blend Input Optimization**:
+  * Decreased the horizontal footprint of the flour name text field so it no longer takes up disproportionate row space.
+  * Enlarged the percentage input width (`w-20` / `w-24`) to ensure 3-digit percentages (e.g. `100%`) render without truncation or container clipping.
+* **100% Bread Flour Default**:
+  * New recipes default strictly to **100% Bread Flour** (removed `Whole Wheat 20%` from initial template).
+* **Dynamic Blend Auto-Balancing**:
+  * Removing secondary flour varieties via the `X` button automatically recalculates and resets the primary flour back to **100%**.
+* **Consolidated Live Formula Presentation**:
+  * Replaced the separate `Starter Flour` and `Starter Water` rows in the formula breakdown table with a single unified row: `Starter: [Total]g ([Flour]g flour / [Water]g water)` derived dynamically from starter hydration.
+
+### 🫙 3. Starter Diary & Dual-Mode Feeding Engine
+* **Interactive Starter Feeding Journal**:
+  * Converted starter summary cards (*Doughlene*, *Bread Pitt*) into interactive elements. Tapping a card opens a full **Feeding Journal Modal** displaying past timestamps, ratios, flour varieties, target vs actual weights, and fermentation notes.
+* **Target Levain Calculator Integration**:
+  * Removed the permanently anchored bottom calculator block from the Starter Diary screen.
+  * Integrated a **Dual-Mode Feeding Calculator** inside the **Log Feed (+)** modal:
+    * **Ratio Mode**: Select ratio presets (`1:1:1`, `1:2:2`, `1:3:3`, `1:4:4`). Adjusting target flour dynamically scales Seed Starter and Water.
+    * **Manual Mode**: Unlinked mode allowing direct, independent gram entry for Seed, Flour, and Water.
+* **Live Feed Status Refresh**:
+  * Submitting a feeding logs the entry to the starter's chronological history, recalculates the relative "Last Fed" timer, and refreshes the health indicator to `Active & Peak`.
+
+### 📖 4. Bake History, Log Archiving & Journaling
+* **Timeline Archiving**:
+  * Marking a bake complete migrates the active session timeline (autolyse intervals, stretch & fold timestamps, bulk fermentation progress) into the permanent history record.
+* **Interactive Loaf Journal**:
+  * Tapping any bake in the **Bake History** tab opens a detailed **Loaf Journal Modal** allowing review of the formula, inspection of the full activity timeline, and editing of sensory ratings (1–5 stars) and tasting/crumb evaluation notes.
+* **Multi-Factor Search & Sort**:
+  * Added a search filter supporting loaf titles, flour blends, and notes.
+  * Added functional sorting drawer (Newest, Oldest, Hydration High to Low, Highest Rating).
+
+---
+
 ## [2026-08-27] — Android Standalone Native App (.APK) Architecture
 
 ### 🤖 Native Android Packaging (Capacitor 6)

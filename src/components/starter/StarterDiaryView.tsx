@@ -3,13 +3,13 @@ import {
   Plus,
   Flame,
   Utensils,
-  Calculator,
   Lock,
   X,
   ShieldCheck,
+  History,
+  ChevronRight,
 } from 'lucide-react';
 import { StarterProfile, UserProfile, StarterFeedEntry } from '../../types';
-import { calculateLevain } from '../../utils/bakersMath';
 import { getRelativeTime } from '../../utils/formatters';
 
 interface StarterDiaryViewProps {
@@ -28,26 +28,51 @@ export const StarterDiaryView: React.FC<StarterDiaryViewProps> = ({
   onOpenAuth,
 }) => {
   const [selectedStarterForFeed, setSelectedStarterForFeed] = useState<StarterProfile | null>(null);
+  const [selectedStarterForHistory, setSelectedStarterForHistory] = useState<StarterProfile | null>(null);
   const [isAddStarterOpen, setIsAddStarterOpen] = useState(false);
   const [newStarterName, setNewStarterName] = useState('');
   const [newStarterFlour, setNewStarterFlour] = useState('100% Rye');
 
-  // Feed Modal State
+  // Feed Modal State & Dual Mode
+  const [feedMode, setFeedMode] = useState<'ratio' | 'manual'>('ratio');
+  const [selectedRatioPreset, setSelectedRatioPreset] = useState<string>('1:2:2');
+  const [ratioSeed, setRatioSeed] = useState(1);
+  const [ratioFlour, setRatioFlour] = useState(2);
+  const [ratioWater, setRatioWater] = useState(2);
+
   const [seedGrams, setSeedGrams] = useState(25);
   const [flourGrams, setFlourGrams] = useState(50);
   const [waterGrams, setWaterGrams] = useState(50);
   const [feedFlourType, setFeedFlourType] = useState('Dark Rye');
   const [feedNotes, setFeedNotes] = useState('');
 
-  // Target Levain Calculator State
-  const [targetLevainWeight, setTargetLevainWeight] = useState(150);
+  // Handle ratio preset change
+  const handleRatioPresetChange = (preset: string) => {
+    setSelectedRatioPreset(preset);
+    const parts = preset.split(':').map(Number);
+    if (parts.length === 3) {
+      const [rS, rF, rW] = parts;
+      setRatioSeed(rS);
+      setRatioFlour(rF);
+      setRatioWater(rW);
+      // Auto recalculate based on current flour
+      const calculatedSeed = Math.round(flourGrams * (rS / rF));
+      const calculatedWater = Math.round(flourGrams * (rW / rF));
+      setSeedGrams(calculatedSeed);
+      setWaterGrams(calculatedWater);
+    }
+  };
 
-  const levainCalc = calculateLevain({
-    targetWeight: targetLevainWeight,
-    ratioSeed: 1,
-    ratioFlour: 2,
-    ratioWater: 2,
-  });
+  // Handle flour change in ratio mode
+  const handleFlourChangeInRatioMode = (newFlour: number) => {
+    setFlourGrams(newFlour);
+    if (feedMode === 'ratio' && ratioFlour > 0) {
+      const calculatedSeed = Math.round(newFlour * (ratioSeed / ratioFlour));
+      const calculatedWater = Math.round(newFlour * (ratioWater / ratioFlour));
+      setSeedGrams(calculatedSeed);
+      setWaterGrams(calculatedWater);
+    }
+  };
 
   // Auth Guard for Guest Users
   if (!user) {
@@ -75,10 +100,10 @@ export const StarterDiaryView: React.FC<StarterDiaryViewProps> = ({
               <ShieldCheck className="w-4 h-4 text-terracotta" /> Personalize starters with custom human names
             </div>
             <div className="flex items-center gap-2 text-ink font-sans text-xs font-semibold">
-              <ShieldCheck className="w-4 h-4 text-terracotta" /> Live health status & peak rise countdowns
+              <ShieldCheck className="w-4 h-4 text-terracotta" /> Interactive feeding history log & fermentation notes
             </div>
             <div className="flex items-center gap-2 text-ink font-sans text-xs font-semibold">
-              <ShieldCheck className="w-4 h-4 text-terracotta" /> 1-tap link to the Recipe Builder
+              <ShieldCheck className="w-4 h-4 text-terracotta" /> Dual-mode ratio & manual feed calculator
             </div>
           </div>
 
@@ -93,6 +118,12 @@ export const StarterDiaryView: React.FC<StarterDiaryViewProps> = ({
     );
   }
 
+  const handleOpenFeedModal = (starter: StarterProfile) => {
+    setSelectedStarterForFeed(starter);
+    setFeedFlourType(starter.flourType || 'Dark Rye');
+    handleRatioPresetChange('1:2:2');
+  };
+
   const handleSaveFeed = (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedStarterForFeed) return;
@@ -102,12 +133,12 @@ export const StarterDiaryView: React.FC<StarterDiaryViewProps> = ({
     const rSeed = Math.round(seedGrams / minPart);
     const rFlour = Math.round(flourGrams / minPart);
     const rWater = Math.round(waterGrams / minPart);
-    const ratioStr = `${rSeed}:${rFlour}:${rWater}`;
+    const ratioStr = feedMode === 'ratio' ? selectedRatioPreset : `${rSeed}:${rFlour}:${rWater}`;
 
     const newEntry: StarterFeedEntry = {
       id: `feed-${Date.now()}`,
       timestamp: Date.now(),
-      dateStr: 'Today',
+      dateStr: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
       timeStr: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
       seedGrams,
       flourGrams,
@@ -119,6 +150,18 @@ export const StarterDiaryView: React.FC<StarterDiaryViewProps> = ({
     };
 
     onLogFeed(selectedStarterForFeed.id, newEntry);
+
+    // If currently viewing history of this starter, update view
+    if (selectedStarterForHistory?.id === selectedStarterForFeed.id) {
+      setSelectedStarterForHistory({
+        ...selectedStarterForHistory,
+        lastFedTimestamp: Date.now(),
+        lastRatio: ratioStr,
+        status: 'active_peak',
+        feedHistory: [newEntry, ...selectedStarterForHistory.feedHistory],
+      });
+    }
+
     setSelectedStarterForFeed(null);
     setFeedNotes('');
   };
@@ -158,20 +201,22 @@ export const StarterDiaryView: React.FC<StarterDiaryViewProps> = ({
     setNewStarterName('');
   };
 
+  const totalFeedBuild = seedGrams + flourGrams + waterGrams;
+
   return (
-    <div className="space-y-6 max-w-lg mx-auto w-full pb-8">
+    <div className="space-y-6 max-w-lg mx-auto w-full pb-8 animate-fadeIn">
       {/* Header Actions */}
       <div className="flex justify-between items-center pt-1 px-1">
         <button
           onClick={() => setIsAddStarterOpen(true)}
-          className="text-muted hover:text-ink font-sans text-xs font-semibold flex items-center gap-1"
+          className="text-muted hover:text-ink font-sans text-xs font-semibold flex items-center gap-1 transition-colors"
         >
           <Plus className="w-4 h-4" /> New Starter
         </button>
 
         <button
-          onClick={() => setSelectedStarterForFeed(starters[0] || null)}
-          className="bg-ink text-onDark shadow-btnInk rounded-[16px] px-4 py-2.5 flex items-center gap-1.5 font-sans text-xs uppercase font-bold tracking-widest transition-transform active:scale-95"
+          onClick={() => handleOpenFeedModal(starters[0])}
+          className="bg-ink text-onDark shadow-btnInk rounded-[16px] px-4 py-2.5 flex items-center gap-1.5 font-sans text-xs uppercase font-bold tracking-widest transition-transform active:scale-95 hover:opacity-90"
         >
           <span>Log Feed</span>
           <Plus className="w-4 h-4" />
@@ -180,9 +225,12 @@ export const StarterDiaryView: React.FC<StarterDiaryViewProps> = ({
 
       {/* Active Starters List */}
       <section className="space-y-4">
-        <h2 className="font-serif italic text-xs uppercase tracking-[0.22em] text-muted">
-          My Starters
-        </h2>
+        <div className="flex justify-between items-center px-1">
+          <h2 className="font-serif italic text-xs uppercase tracking-[0.22em] text-muted">
+            My Starters
+          </h2>
+          <span className="font-sans text-[11px] text-faint">Tap card for history</span>
+        </div>
 
         {starters.map((starter) => {
           const isPeak = starter.status === 'active_peak';
@@ -191,13 +239,17 @@ export const StarterDiaryView: React.FC<StarterDiaryViewProps> = ({
           return (
             <div
               key={starter.id}
-              className="bg-card rounded-[20px] p-[17px] shadow-[0_2px_12px_rgba(51,48,42,0.06),inset_0_1px_0_rgba(255,255,255,0.8)] border border-border-card relative overflow-hidden flex flex-col gap-4"
+              onClick={() => setSelectedStarterForHistory(starter)}
+              className="bg-card rounded-[20px] p-[17px] shadow-[0_2px_12px_rgba(51,48,42,0.06),inset_0_1px_0_rgba(255,255,255,0.8)] border border-border-card relative overflow-hidden flex flex-col gap-4 cursor-pointer hover:border-terracotta/40 transition-all active:scale-[0.99] group"
             >
               <div className="flex justify-between items-start">
                 <div>
-                  <h3 className="font-serif text-[22px] font-semibold text-ink">
-                    {starter.name}
-                  </h3>
+                  <div className="flex items-center gap-2">
+                    <h3 className="font-serif text-[22px] font-semibold text-ink group-hover:text-terracotta transition-colors">
+                      {starter.name}
+                    </h3>
+                    <ChevronRight className="w-4 h-4 text-faint group-hover:text-terracotta transition-colors" />
+                  </div>
                   <p className="font-sans text-xs text-muted mt-0.5">
                     {starter.hydration}% Hydration • {starter.flourType}
                   </p>
@@ -251,161 +303,276 @@ export const StarterDiaryView: React.FC<StarterDiaryViewProps> = ({
                 </div>
               </div>
 
-              {/* Progress Bar */}
-              <div className="w-full bg-oat border border-border-field rounded-full h-2 overflow-hidden">
-                <div
-                  className={`h-full rounded-full transition-all ${
-                    isPeak ? 'bg-terracotta w-[85%]' : 'bg-warning w-[25%]'
-                  }`}
-                />
+              {/* Progress Bar & Feed Action */}
+              <div className="flex items-center gap-3">
+                <div className="flex-1 bg-oat border border-border-field rounded-full h-2 overflow-hidden">
+                  <div
+                    className={`h-full rounded-full transition-all ${
+                      isPeak ? 'bg-terracotta w-[85%]' : 'bg-warning w-[25%]'
+                    }`}
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleOpenFeedModal(starter);
+                  }}
+                  className="px-3 py-1 bg-oat hover:bg-linen border border-border-field rounded-lg font-sans text-xs font-semibold text-ink active:scale-95 transition-all"
+                >
+                  Feed
+                </button>
               </div>
             </div>
           );
         })}
       </section>
 
-      {/* Target Levain Calculator */}
-      <section className="space-y-4 pt-2">
-        <div className="flex items-center gap-2">
-          <Calculator className="w-4 h-4 text-terracotta" />
-          <h2 className="font-serif italic text-xs uppercase tracking-[0.22em] text-muted">
-            Target Levain Calculator (1:2:2)
-          </h2>
-        </div>
-
-        <div className="bg-linen rounded-[20px] p-[17px] border border-border-card flex flex-col gap-5 relative overflow-hidden">
-          {/* Target Weight Input */}
-          <div className="space-y-1.5">
-            <label className="font-sans text-[10px] text-faint uppercase font-bold tracking-wider block">
-              Target Weight (g)
-            </label>
-            <div className="relative w-3/5">
-              <input
-                type="number"
-                value={targetLevainWeight}
-                onChange={(e) => setTargetLevainWeight(Math.max(0, Number(e.target.value) || 0))}
-                className="w-full bg-oat border border-border-field rounded-[11px] px-3 py-2 font-mono text-[17px] font-bold text-ink focus:outline-none focus:ring-2 focus:ring-terracotta/20 text-right pr-8"
-              />
-              <span className="absolute right-3 top-1/2 -translate-y-1/2 font-sans text-xs text-muted">
-                g
-              </span>
-            </div>
-          </div>
-
-          {/* Dotted Leader Rows */}
-          <div className="flex flex-col gap-2.5">
-            <div className="flex items-baseline w-full">
-              <span className="font-serif text-[15px] text-ink whitespace-nowrap">Starter</span>
-              <div className="flex-1 border-b-[1.5px] border-dotted border-border-leader mx-2 relative top-[-4px]" />
-              <span className="font-sans text-[15px] font-bold text-ink mr-1">
-                {levainCalc.seedGrams}
-              </span>
-              <span className="font-sans text-[11px] text-faint">g</span>
-            </div>
-
-            <div className="flex items-baseline w-full">
-              <span className="font-serif text-[15px] text-ink whitespace-nowrap">Flour</span>
-              <div className="flex-1 border-b-[1.5px] border-dotted border-border-leader mx-2 relative top-[-4px]" />
-              <span className="font-sans text-[15px] font-bold text-ink mr-1">
-                {levainCalc.flourGrams}
-              </span>
-              <span className="font-sans text-[11px] text-faint">g</span>
-            </div>
-
-            <div className="flex items-baseline w-full">
-              <span className="font-serif text-[15px] text-ink whitespace-nowrap">Water</span>
-              <div className="flex-1 border-b-[1.5px] border-dotted border-border-leader mx-2 relative top-[-4px]" />
-              <span className="font-sans text-[15px] font-bold text-ink mr-1">
-                {levainCalc.waterGrams}
-              </span>
-              <span className="font-sans text-[11px] text-faint">g</span>
-            </div>
-          </div>
-
-          {/* Totals Bar */}
-          <div className="-mx-[17px] -mb-[17px] bg-terracotta text-onDark p-3.5 px-[17px] flex justify-between items-center">
-            <span className="font-serif italic text-sm text-onDark">Total Build</span>
-            <div className="flex items-baseline gap-1">
-              <span className="font-mono font-bold text-base text-onDark">
-                {levainCalc.totalBuildGrams}
-              </span>
-              <span className="font-sans text-xs text-onDark/75">g</span>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* Log Feed Modal */}
-      {selectedStarterForFeed && (
+      {/* ================= STARTER FEEDING HISTORY MODAL ================= */}
+      {selectedStarterForHistory && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-ink/40 backdrop-blur-sm animate-fadeIn">
-          <div className="bg-card max-w-sm w-full rounded-[20px] border border-border-card p-5 space-y-4 shadow-xl">
-            <div className="flex justify-between items-start">
+          <div className="bg-card max-w-md w-full max-h-[85vh] rounded-[24px] border border-border-card shadow-2xl flex flex-col overflow-hidden animate-scaleUp">
+            {/* Modal Header */}
+            <div className="p-5 bg-card border-b border-border-card flex justify-between items-start">
               <div>
-                <span className="font-serif italic text-xs uppercase text-terracotta">Feed Log</span>
-                <h3 className="font-serif text-lg font-semibold text-ink">
-                  {selectedStarterForFeed.name}
+                <div className="flex items-center gap-2">
+                  <span className="font-serif italic text-xs uppercase text-terracotta">Feeding Journal</span>
+                  <span className="bg-linen px-2 py-0.5 rounded-full font-mono text-[10px] text-ink font-semibold">
+                    {selectedStarterForHistory.feedHistory?.length || 0} Feeds
+                  </span>
+                </div>
+                <h3 className="font-serif text-2xl font-bold text-ink mt-0.5">
+                  {selectedStarterForHistory.name}
                 </h3>
+                <p className="font-sans text-xs text-muted">
+                  {selectedStarterForHistory.flourType} · {selectedStarterForHistory.hydration}% Hydration
+                </p>
               </div>
+
               <button
-                onClick={() => setSelectedStarterForFeed(null)}
-                className="text-muted hover:text-ink"
+                onClick={() => setSelectedStarterForHistory(null)}
+                className="text-muted hover:text-ink p-1 rounded-full hover:bg-oat transition-colors"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            <form onSubmit={handleSaveFeed} className="space-y-3">
+            {/* History Feed List */}
+            <div className="p-5 overflow-y-auto space-y-3 flex-1">
+              {(!selectedStarterForHistory.feedHistory || selectedStarterForHistory.feedHistory.length === 0) ? (
+                <div className="py-8 text-center space-y-2">
+                  <History className="w-8 h-8 text-muted mx-auto" />
+                  <p className="font-serif text-sm text-ink">No feed history recorded yet.</p>
+                  <p className="font-sans text-xs text-muted">Log your first feed below!</p>
+                </div>
+              ) : (
+                selectedStarterForHistory.feedHistory.map((feed) => (
+                  <div
+                    key={feed.id}
+                    className="bg-oat/70 rounded-xl p-3.5 border border-border-field space-y-2"
+                  >
+                    <div className="flex justify-between items-center">
+                      <div className="flex items-center gap-2">
+                        <span className="font-sans text-xs font-bold text-ink">{feed.dateStr}</span>
+                        <span className="font-sans text-[11px] text-faint">({feed.timeStr})</span>
+                      </div>
+                      <span className="bg-linen border border-border-card text-terracotta font-mono font-bold text-xs px-2.5 py-0.5 rounded-full">
+                        {feed.ratio}
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-2 text-center bg-card p-2 rounded-lg border border-border-card/60">
+                      <div>
+                        <span className="text-[10px] text-faint uppercase font-bold block">Seed</span>
+                        <span className="font-mono text-xs font-bold text-ink">{feed.seedGrams}g</span>
+                      </div>
+                      <div>
+                        <span className="text-[10px] text-faint uppercase font-bold block">Flour ({feed.flourType || 'Flour'})</span>
+                        <span className="font-mono text-xs font-bold text-ink">{feed.flourGrams}g</span>
+                      </div>
+                      <div>
+                        <span className="text-[10px] text-faint uppercase font-bold block">Water</span>
+                        <span className="font-mono text-xs font-bold text-ink">{feed.waterGrams}g</span>
+                      </div>
+                    </div>
+
+                    {feed.notes && (
+                      <p className="font-serif italic text-xs text-muted pl-1 border-l-2 border-terracotta/40">
+                        "{feed.notes}"
+                      </p>
+                    )}
+                  </div>
+                ))
+              )}
+            </div>
+
+            {/* Modal Footer Action */}
+            <div className="p-4 bg-oat border-t border-border-card flex gap-2">
+              <button
+                onClick={() => {
+                  const target = selectedStarterForHistory;
+                  setSelectedStarterForHistory(null);
+                  handleOpenFeedModal(target);
+                }}
+                className="w-full bg-terracotta hover:bg-primary text-white py-3 rounded-[16px] font-sans font-semibold text-xs shadow-btnTerracotta active:scale-98 transition-all flex items-center justify-center gap-1.5"
+              >
+                <Plus className="w-4 h-4" />
+                <span>Log New Feed for {selectedStarterForHistory.name}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ================= LOG FEED & DUAL LEVAIN CALCULATOR MODAL ================= */}
+      {selectedStarterForFeed && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-ink/40 backdrop-blur-sm animate-fadeIn">
+          <div className="bg-card max-w-sm w-full rounded-[24px] border border-border-card p-5 space-y-4 shadow-2xl animate-scaleUp">
+            <div className="flex justify-between items-start">
+              <div>
+                <span className="font-serif italic text-xs uppercase text-terracotta">Feed & Levain Calculator</span>
+                <h3 className="font-serif text-xl font-semibold text-ink">
+                  {selectedStarterForFeed.name}
+                </h3>
+              </div>
+              <button
+                onClick={() => setSelectedStarterForFeed(null)}
+                className="text-muted hover:text-ink p-1"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Feed Mode Switcher (Ratio vs Manual) */}
+            <div className="grid grid-cols-2 gap-1 p-1 bg-oat border border-border-field rounded-xl">
+              <button
+                type="button"
+                onClick={() => setFeedMode('ratio')}
+                className={`py-1.5 px-2 rounded-lg text-center font-sans text-xs font-semibold transition-all ${
+                  feedMode === 'ratio'
+                    ? 'bg-card text-ink shadow-sm border border-border-card'
+                    : 'text-muted hover:text-ink'
+                }`}
+              >
+                ⚖️ Ratio Mode
+              </button>
+              <button
+                type="button"
+                onClick={() => setFeedMode('manual')}
+                className={`py-1.5 px-2 rounded-lg text-center font-sans text-xs font-semibold transition-all ${
+                  feedMode === 'manual'
+                    ? 'bg-card text-ink shadow-sm border border-border-card'
+                    : 'text-muted hover:text-ink'
+                }`}
+              >
+                ✍️ Manual Mode
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveFeed} className="space-y-3.5">
+              {/* Ratio Mode Presets */}
+              {feedMode === 'ratio' && (
+                <div className="space-y-2">
+                  <label className="text-[10px] text-faint uppercase font-bold font-sans block">
+                    Select Target Ratio (Seed : Flour : Water)
+                  </label>
+                  <div className="grid grid-cols-4 gap-1.5">
+                    {['1:1:1', '1:2:2', '1:3:3', '1:4:4'].map((preset) => (
+                      <button
+                        key={preset}
+                        type="button"
+                        onClick={() => handleRatioPresetChange(preset)}
+                        className={`py-1.5 rounded-lg font-mono text-xs font-bold border transition-all ${
+                          selectedRatioPreset === preset
+                            ? 'bg-linen border-terracotta text-terracotta shadow-sm'
+                            : 'bg-oat border-border-field text-muted hover:text-ink'
+                        }`}
+                      >
+                        {preset}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Feed Grams Grid */}
               <div className="grid grid-cols-3 gap-2">
                 <div>
-                  <label className="text-[10px] text-faint uppercase font-bold font-sans">Seed (g)</label>
+                  <label className="text-[10px] text-faint uppercase font-bold font-sans block mb-1">
+                    Seed (g)
+                  </label>
                   <input
                     type="number"
                     value={seedGrams}
-                    onChange={(e) => setSeedGrams(Number(e.target.value))}
-                    className="w-full bg-oat border border-border-field rounded-[11px] p-2 text-center font-mono font-bold text-xs"
+                    disabled={feedMode === 'ratio'}
+                    onChange={(e) => setSeedGrams(Math.max(0, Number(e.target.value) || 0))}
+                    className={`w-full bg-oat border border-border-field rounded-[11px] p-2 text-center font-mono font-bold text-xs ${
+                      feedMode === 'ratio' ? 'opacity-80 bg-linen/70' : ''
+                    }`}
                     required
                   />
                 </div>
                 <div>
-                  <label className="text-[10px] text-faint uppercase font-bold font-sans">Flour (g)</label>
+                  <label className="text-[10px] text-faint uppercase font-bold font-sans block mb-1">
+                    Flour (g)
+                  </label>
                   <input
                     type="number"
                     value={flourGrams}
-                    onChange={(e) => setFlourGrams(Number(e.target.value))}
-                    className="w-full bg-oat border border-border-field rounded-[11px] p-2 text-center font-mono font-bold text-xs"
+                    onChange={(e) => {
+                      const val = Math.max(0, Number(e.target.value) || 0);
+                      if (feedMode === 'ratio') {
+                        handleFlourChangeInRatioMode(val);
+                      } else {
+                        setFlourGrams(val);
+                      }
+                    }}
+                    className="w-full bg-oat border border-border-field rounded-[11px] p-2 text-center font-mono font-bold text-xs focus:ring-2 focus:ring-terracotta/20"
                     required
                   />
                 </div>
                 <div>
-                  <label className="text-[10px] text-faint uppercase font-bold font-sans">Water (g)</label>
+                  <label className="text-[10px] text-faint uppercase font-bold font-sans block mb-1">
+                    Water (g)
+                  </label>
                   <input
                     type="number"
                     value={waterGrams}
-                    onChange={(e) => setWaterGrams(Number(e.target.value))}
-                    className="w-full bg-oat border border-border-field rounded-[11px] p-2 text-center font-mono font-bold text-xs"
+                    disabled={feedMode === 'ratio'}
+                    onChange={(e) => setWaterGrams(Math.max(0, Number(e.target.value) || 0))}
+                    className={`w-full bg-oat border border-border-field rounded-[11px] p-2 text-center font-mono font-bold text-xs ${
+                      feedMode === 'ratio' ? 'opacity-80 bg-linen/70' : ''
+                    }`}
                     required
                   />
                 </div>
               </div>
 
+              {/* Live Build Summary */}
+              <div className="bg-linen p-2.5 rounded-xl border border-border-card flex justify-between items-center text-xs">
+                <span className="font-serif italic text-muted">Total Levain Build:</span>
+                <span className="font-mono font-bold text-terracotta">{totalFeedBuild}g</span>
+              </div>
+
               <div>
-                <label className="text-[10px] text-faint uppercase font-bold font-sans">Flour Type</label>
+                <label className="text-[10px] text-faint uppercase font-bold font-sans block mb-1">Flour Type</label>
                 <input
                   type="text"
                   value={feedFlourType}
                   onChange={(e) => setFeedFlourType(e.target.value)}
-                  className="w-full bg-oat border border-border-field rounded-[11px] p-2 text-xs font-sans"
+                  className="w-full bg-oat border border-border-field rounded-[11px] p-2 text-xs font-sans text-ink focus:outline-none"
+                  placeholder="e.g. Dark Rye, Bread Flour"
                 />
               </div>
 
               <div>
-                <label className="text-[10px] text-faint uppercase font-bold font-sans">Notes / Aroma</label>
+                <label className="text-[10px] text-faint uppercase font-bold font-sans block mb-1">Notes / Aroma Observations</label>
                 <input
                   type="text"
-                  placeholder="e.g. Doubled in 4h, sweet yeasty aroma"
+                  placeholder="e.g. Doubled in 4h, fruity sweet aroma"
                   value={feedNotes}
                   onChange={(e) => setFeedNotes(e.target.value)}
-                  className="w-full bg-oat border border-border-field rounded-[11px] p-2 text-xs font-sans"
+                  className="w-full bg-oat border border-border-field rounded-[11px] p-2 text-xs font-sans text-ink focus:outline-none"
                 />
               </div>
 
@@ -420,10 +587,10 @@ export const StarterDiaryView: React.FC<StarterDiaryViewProps> = ({
         </div>
       )}
 
-      {/* Add New Starter Modal */}
+      {/* ================= ADD NEW STARTER MODAL ================= */}
       {isAddStarterOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-ink/40 backdrop-blur-sm animate-fadeIn">
-          <div className="bg-card max-w-sm w-full rounded-[20px] border border-border-card p-5 space-y-4 shadow-xl">
+          <div className="bg-card max-w-sm w-full rounded-[20px] border border-border-card p-5 space-y-4 shadow-xl animate-scaleUp">
             <div className="flex justify-between items-start">
               <h3 className="font-serif text-lg font-semibold text-ink">Name Your Starter</h3>
               <button
@@ -442,7 +609,7 @@ export const StarterDiaryView: React.FC<StarterDiaryViewProps> = ({
                   placeholder="e.g. Doughlene, Clint Yeastwood"
                   value={newStarterName}
                   onChange={(e) => setNewStarterName(e.target.value)}
-                  className="w-full bg-oat border border-border-field rounded-[11px] p-2.5 text-xs font-serif text-ink"
+                  className="w-full bg-oat border border-border-field rounded-[11px] p-2.5 text-xs font-serif text-ink focus:outline-none"
                   required
                 />
               </div>
@@ -454,14 +621,14 @@ export const StarterDiaryView: React.FC<StarterDiaryViewProps> = ({
                   placeholder="e.g. 100% Dark Rye, AP Blend"
                   value={newStarterFlour}
                   onChange={(e) => setNewStarterFlour(e.target.value)}
-                  className="w-full bg-oat border border-border-field rounded-[11px] p-2.5 text-xs font-sans"
+                  className="w-full bg-oat border border-border-field rounded-[11px] p-2.5 text-xs font-sans text-ink focus:outline-none"
                   required
                 />
               </div>
 
               <button
                 type="submit"
-                className="w-full bg-ink text-onDark py-3 rounded-[16px] font-sans font-semibold text-xs shadow-btnInk active:scale-98 transition-all"
+                className="w-full bg-ink text-onDark py-3 rounded-[16px] font-sans font-semibold text-xs shadow-btnInk active:scale-98 transition-all hover:opacity-90"
               >
                 Create Starter
               </button>

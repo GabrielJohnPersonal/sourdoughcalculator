@@ -278,20 +278,31 @@
 
       // ================= SECTION 3: FLOUR BLEND STATE =================
       const [flourBlend, setFlourBlend] = useState([
-        { id: 1, name: 'Bread Flour', pct: 80 },
-        { id: 2, name: 'Whole Wheat', pct: 20 },
+        { id: 1, name: 'Bread Flour', pct: 100 },
       ]);
 
       // Levain Builder State (Diary Tab)
       const [levainTarget, setLevainTarget] = useState(150);
       const [levainRatio, setLevainRatio] = useState('1:2:2');
 
-      // Feed Modal State
+      // Feed Modal State & History Modal State
       const [selectedFeedStarter, setSelectedFeedStarter] = useState(null);
+      const [selectedHistoryStarter, setSelectedHistoryStarter] = useState(null);
+      const [feedMode, setFeedMode] = useState('ratio'); // 'ratio' | 'manual'
+      const [feedRatioPreset, setFeedRatioPreset] = useState('1:2:2');
       const [feedSeedGrams, setFeedSeedGrams] = useState(25);
       const [feedFlourGrams, setFeedFlourGrams] = useState(50);
       const [feedWaterGrams, setFeedWaterGrams] = useState(50);
+      const [feedFlourType, setFeedFlourType] = useState('Dark Rye');
       const [feedNotes, setFeedNotes] = useState('');
+
+      // History Tab Search & Filter & Journal State
+      const [historySearch, setHistorySearch] = useState('');
+      const [historySortBy, setHistorySortBy] = useState('date_desc');
+      const [isHistoryFilterOpen, setIsHistoryFilterOpen] = useState(false);
+      const [selectedJournalBake, setSelectedJournalBake] = useState(null);
+      const [journalRating, setJournalRating] = useState(5);
+      const [journalNotes, setJournalNotes] = useState('');
 
       // Live Timer Tick
       const [now, setNow] = useState(Date.now());
@@ -352,23 +363,23 @@
       const totalDoughGrams = (calcFlour * calcLoaves) + totalWaterGrams + totalSaltGrams;
       const totalDoughPct = calcFlour > 0 ? Math.round((totalDoughGrams / (calcFlour * calcLoaves)) * 1000) / 10 : 0;
 
-      const ratioParts = useMemo(() => {
-        const [rS, rF, rW] = levainRatio.split(':').map(Number);
-        const totalParts = (rS || 1) + (rF || 2) + (rW || 2);
-        const part = totalParts > 0 ? levainTarget / totalParts : 0;
-        return {
-          seed: Math.round(part * (rS || 1)),
-          flour: Math.round(part * (rF || 2)),
-          water: Math.round(part * (rW || 2)),
-        };
-      }, [levainTarget, levainRatio]);
-
       const handleAddFlour = () => {
-        setFlourBlend(prev => [...prev, { id: Date.now(), name: 'Dark Rye', pct: 10 }]);
+        setFlourBlend(prev => {
+          if (prev.length > 0 && prev[0].pct > 10) {
+            const updatedFirst = { ...prev[0], pct: prev[0].pct - 10 };
+            return [updatedFirst, ...prev.slice(1), { id: Date.now(), name: 'Dark Rye', pct: 10 }];
+          }
+          return [...prev, { id: Date.now(), name: 'Dark Rye', pct: 10 }];
+        });
       };
       const handleRemoveFlour = (id) => {
         if (flourBlend.length <= 1) return;
-        setFlourBlend(prev => prev.filter(f => f.id !== id));
+        setFlourBlend(prev => {
+          const remaining = prev.filter(f => f.id !== id);
+          if (remaining.length === 1) return [{ ...remaining[0], pct: 100 }];
+          const secondarySum = remaining.slice(1).reduce((acc, f) => acc + (Number(f.pct) || 0), 0);
+          return [{ ...remaining[0], pct: Math.max(0, 100 - secondarySum) }, ...remaining.slice(1)];
+        });
       };
       const handleUpdateFlour = (id, field, val) => {
         setFlourBlend(prev => prev.map(f => f.id === id ? { ...f, [field]: field === 'pct' ? Number(val) || 0 : val } : f));
@@ -394,23 +405,6 @@
         setIsBuildingRecipe(true);
       };
 
-      const toggleWakeLock = async () => {
-        if (!('wakeLock' in navigator)) {
-          setWakeLockActive(!wakeLockActive);
-          return;
-        }
-        try {
-          if (!wakeLockActive) {
-            await navigator.wakeLock.request('screen');
-            setWakeLockActive(true);
-          } else {
-            setWakeLockActive(false);
-          }
-        } catch {
-          setWakeLockActive(!wakeLockActive);
-        }
-      };
-
       const handleCloseWelcome = () => {
         localStorage.setItem('sourdough_seen_welcome', 'true');
         setHasSeenWelcome(true);
@@ -425,15 +419,12 @@
 
       const handleOpenFeedModal = (starter) => {
         setSelectedFeedStarter(starter);
-        if (starter.hydration === 60) {
-          setFeedSeedGrams(50);
-          setFeedFlourGrams(50);
-          setFeedWaterGrams(30);
-        } else {
-          setFeedSeedGrams(25);
-          setFeedFlourGrams(50);
-          setFeedWaterGrams(50);
-        }
+        setFeedFlourType(starter.flourType || 'Dark Rye');
+        setFeedMode('ratio');
+        setFeedRatioPreset('1:2:2');
+        setFeedSeedGrams(25);
+        setFeedFlourGrams(50);
+        setFeedWaterGrams(50);
         setFeedNotes('');
       };
 
@@ -450,24 +441,11 @@
 
               <div className="flex items-center gap-2.5">
                 <button
-                  onClick={toggleWakeLock}
-                  className={`flex items-center gap-1 px-2.5 py-1 rounded-full border transition-all active:scale-95 ${
-                    wakeLockActive
-                      ? 'bg-linen border-terracotta/40 text-terracotta shadow-sm'
-                      : 'bg-oat border-border-field text-muted'
-                  }`}
-                >
-                  <LucideIcon name="lightbulb" className={`w-3.5 h-3.5 ${wakeLockActive ? 'text-terracotta' : 'text-faint'}`} />
-                  <span className="font-sans text-[10px] uppercase tracking-wider font-semibold">
-                    {wakeLockActive ? 'Awake' : 'Sleep'}
-                  </span>
-                </button>
-
-                <button
                   onClick={() => setIsWelcomeOpen(true)}
-                  className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs shadow-sm transition-transform active:scale-95 ${
+                  className={`w-9 h-9 rounded-full flex items-center justify-center font-bold text-xs shadow-sm transition-transform active:scale-95 ${
                     user ? 'bg-terracotta text-white' : 'bg-ink text-onDark'
                   }`}
+                  title={user ? 'Signed in' : 'Sign in to sync your bakes'}
                 >
                   {user ? (user.name ? user.name[0].toUpperCase() : 'G') : <LucideIcon name="user" className="w-4 h-4 text-onDark" />}
                 </button>
@@ -771,26 +749,30 @@
 
                       <div className="bg-card rounded-[20px] shadow-sm border border-border-card p-4 space-y-3">
                         {flourBlend.map((f) => (
-                          <div key={f.id} className="flex items-center gap-3">
+                          <div key={f.id} className="flex items-center gap-2.5">
                             <input
                               type="text"
                               value={f.name}
+                              placeholder="Flour name (e.g. Bread Flour)"
                               onChange={(e) => handleUpdateFlour(f.id, 'name', e.target.value)}
-                              className="flex-1 bg-oat border border-border-field rounded-lg px-3 py-2 font-serif text-sm text-ink focus:outline-none"
+                              className="flex-1 min-w-0 bg-oat border border-border-field rounded-lg px-2.5 py-2 font-serif text-xs sm:text-sm text-ink focus:outline-none focus:ring-1 focus:ring-terracotta/30"
                             />
-                            <div className="w-24 relative">
+                            <div className="w-20 sm:w-24 relative flex-shrink-0">
                               <input
                                 type="number"
+                                min="0"
+                                max="100"
                                 value={f.pct}
                                 onChange={(e) => handleUpdateFlour(f.id, 'pct', e.target.value)}
-                                className="w-full bg-oat border border-border-field rounded-[11px] px-2 py-2 font-mono font-bold text-sm text-center pr-6 focus:outline-none"
+                                className="w-full bg-oat border border-border-field rounded-[11px] px-2 py-2 font-mono font-bold text-xs sm:text-sm text-center pr-6 focus:outline-none focus:ring-1 focus:ring-terracotta/30"
                               />
-                              <span className="absolute right-2 top-1/2 -translate-y-1/2 font-mono text-xs text-muted">%</span>
+                              <span className="absolute right-2 top-1/2 -translate-y-1/2 font-mono text-xs text-muted pointer-events-none">%</span>
                             </div>
                             <button
+                              type="button"
                               onClick={() => handleRemoveFlour(f.id)}
                               disabled={flourBlend.length <= 1}
-                              className="text-disabled hover:text-danger p-1 disabled:opacity-30"
+                              className="text-disabled hover:text-danger p-1 disabled:opacity-25 flex-shrink-0 transition-colors"
                             >
                               <LucideIcon name="x" className="w-4 h-4" />
                             </button>
@@ -798,7 +780,7 @@
                         ))}
                         <button
                           onClick={handleAddFlour}
-                          className="w-full py-2 bg-oat border border-dashed border-border-field rounded-xl font-sans text-xs font-bold text-terracotta uppercase tracking-wider flex items-center justify-center gap-1 hover:bg-linen"
+                          className="w-full py-2 bg-oat border border-dashed border-border-field rounded-xl font-sans text-xs font-bold text-terracotta uppercase tracking-wider flex items-center justify-center gap-1 hover:bg-linen transition-colors"
                         >
                           <LucideIcon name="plus" className="w-3.5 h-3.5" /> Add Flour Type
                         </button>
@@ -825,17 +807,26 @@
                             </div>
                           ))}
 
+                          {/* Consolidated Starter Row */}
                           <div className="flex items-baseline w-full">
-                            <span className="font-serif text-[15px] text-ink whitespace-nowrap">Starter Flour</span>
+                            <div className="flex flex-col">
+                              <span className="font-serif text-[15px] text-ink whitespace-nowrap">Starter</span>
+                              <span className="font-sans text-[10px] text-faint">
+                                ({computedStarterFlour}g flour / {computedStarterWater}g water)
+                              </span>
+                            </div>
                             <div className="flex-1 border-b-[1.5px] border-dotted border-border-leader mx-2 relative top-[-4px]"></div>
                             <div className="flex items-baseline gap-2 text-right min-w-[85px]">
-                              <span className="font-sans text-[15px] font-bold text-ink">{computedStarterFlour}<span className="text-faint text-[10px] ml-0.5">g</span></span>
-                              <span className="font-mono text-[12px] text-muted w-10">{calcFlour > 0 ? Math.round((computedStarterFlour / (calcFlour * calcLoaves)) * 1000) / 10 : 0}%</span>
+                              <span className="font-sans text-[15px] font-bold text-ink">{computedTotalStarter}<span className="text-faint text-[10px] ml-0.5">g</span></span>
+                              <span className="font-mono text-[12px] text-muted w-10">
+                                {calcFlour > 0 ? Math.round((computedTotalStarter / (calcFlour * calcLoaves)) * 1000) / 10 : 0}%
+                              </span>
                             </div>
                           </div>
 
+                          {/* Main Water Row */}
                           <div className="flex items-baseline w-full">
-                            <span className="font-serif text-[15px] text-ink whitespace-nowrap">Main Water</span>
+                            <span className="font-serif text-[15px] text-ink whitespace-nowrap">Water</span>
                             <div className="flex-1 border-b-[1.5px] border-dotted border-border-leader mx-2 relative top-[-4px]"></div>
                             <div className="flex items-baseline gap-2 text-right min-w-[85px]">
                               <span className="font-sans text-[15px] font-bold text-ink">{mainWaterGrams}<span className="text-faint text-[10px] ml-0.5">g</span></span>
@@ -843,15 +834,7 @@
                             </div>
                           </div>
 
-                          <div className="flex items-baseline w-full">
-                            <span className="font-serif text-[15px] text-ink whitespace-nowrap">Starter Water</span>
-                            <div className="flex-1 border-b-[1.5px] border-dotted border-border-leader mx-2 relative top-[-4px]"></div>
-                            <div className="flex items-baseline gap-2 text-right min-w-[85px]">
-                              <span className="font-sans text-[15px] font-bold text-ink">{computedStarterWater}<span className="text-faint text-[10px] ml-0.5">g</span></span>
-                              <span className="font-mono text-[12px] text-muted w-10">{calcFlour > 0 ? Math.round((computedStarterWater / (calcFlour * calcLoaves)) * 1000) / 10 : 0}%</span>
-                            </div>
-                          </div>
-
+                          {/* Salt Row */}
                           <div className="flex items-baseline w-full">
                             <span className="font-serif text-[15px] text-ink whitespace-nowrap">Salt</span>
                             <div className="flex-1 border-b-[1.5px] border-dotted border-border-leader mx-2 relative top-[-4px]"></div>
@@ -1131,53 +1114,138 @@
                   </div>
                 ) : (
                   <div className="space-y-4">
-                    {history.map(item => (
-                      <div key={item.id} className="bg-card rounded-[20px] shadow-card border border-border-card overflow-hidden">
-                        <div className="p-[17px]">
-                          <div className="flex justify-between items-start mb-3">
-                            <div>
-                              <h3 className="font-serif text-[17px] font-semibold text-ink">{item.title}</h3>
-                              <p className="font-sans text-[10px] text-faint uppercase tracking-wider mt-0.5">{item.date}</p>
-                            </div>
-                            <div className="flex gap-0.5 text-warning">
-                              {[1, 2, 3, 4, 5].map(star => (
-                                <LucideIcon
-                                  key={star}
-                                  name="star"
-                                  className={`w-4 h-4 ${star <= item.rating ? 'fill-warning text-warning' : 'text-border-field'}`}
-                                />
-                              ))}
-                            </div>
-                          </div>
-
-                          <div className="flex flex-col gap-2 mb-2">
-                            <div className="flex justify-between items-baseline border-b border-dotted border-border-leader pb-1">
-                              <span className="font-sans text-xs text-muted">Hydration</span>
-                              <span className="font-mono text-xs font-bold text-olive">{item.hydration}%</span>
-                            </div>
-                            <div className="flex justify-between items-baseline border-b border-dotted border-border-leader pb-1">
-                              <span className="font-sans text-xs text-muted">Total Flour</span>
-                              <span className="font-sans text-xs font-bold text-ink">{item.totalFlour}g</span>
-                            </div>
-                            <div className="flex justify-between items-baseline border-b border-dotted border-border-leader pb-1">
-                              <span className="font-sans text-xs text-muted">Starter</span>
-                              <span className="font-sans text-xs font-bold text-ink">{item.starterGrams ? `${item.starterGrams}g` : '100g'}</span>
-                            </div>
-                          </div>
+                    {/* Search & Sort Bar */}
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2">
+                        <div className="relative flex-1">
+                          <LucideIcon name="search" className="w-4 h-4 text-muted absolute left-3.5 top-1/2 -translate-y-1/2" />
+                          <input
+                            type="text"
+                            placeholder="Search by loaf, flour, starter..."
+                            value={historySearch}
+                            onChange={(e) => setHistorySearch(e.target.value)}
+                            className="w-full bg-card border border-border-field rounded-[11px] pl-10 pr-4 py-2.5 font-sans text-xs text-ink placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-terracotta/20"
+                          />
+                          {historySearch && (
+                            <button onClick={() => setHistorySearch('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted hover:text-ink">
+                              <LucideIcon name="x" className="w-3.5 h-3.5" />
+                            </button>
+                          )}
                         </div>
-
-                        <div className="bg-oat px-[17px] py-3 flex justify-between items-center border-t border-border-card">
-                          <span className="font-serif italic text-xs text-muted line-clamp-1">"{item.notes}"</span>
-                          <button
-                            onClick={() => handleCloneBake(item)}
-                            className="flex items-center gap-1 font-sans text-xs font-semibold text-terracotta ml-3 whitespace-nowrap active:opacity-70 transition-opacity"
-                          >
-                            <span>Clone to New Bake</span>
-                            <LucideIcon name="copy" className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
+                        <button
+                          onClick={() => setIsHistoryFilterOpen(prev => !prev)}
+                          className={`w-10 h-10 rounded-[11px] border flex items-center justify-center transition-all ${
+                            isHistoryFilterOpen ? 'bg-linen border-terracotta text-terracotta' : 'bg-card border-border-field text-ink hover:bg-oat'
+                          }`}
+                        >
+                          <LucideIcon name="sliders-horizontal" className="w-4 h-4" />
+                        </button>
                       </div>
-                    ))}
+
+                      {isHistoryFilterOpen && (
+                        <div className="bg-linen p-3 rounded-xl border border-border-card space-y-2 animate-fadeIn">
+                          <span className="font-sans text-[10px] text-faint uppercase font-bold tracking-wider block">Sort Bakes By</span>
+                          <div className="grid grid-cols-2 gap-1.5">
+                            {[
+                              { id: 'date_desc', label: '🗓️ Newest First' },
+                              { id: 'date_asc', label: '🗓️ Oldest First' },
+                              { id: 'hydration_desc', label: '💧 Hydration (High)' },
+                              { id: 'rating_desc', label: '⭐ Highest Rating' },
+                            ].map(opt => (
+                              <button
+                                key={opt.id}
+                                onClick={() => setHistorySortBy(opt.id)}
+                                className={`py-1.5 px-2 rounded-lg font-sans text-xs text-left transition-all ${
+                                  historySortBy === opt.id ? 'bg-card border border-border-card text-ink font-bold shadow-sm' : 'text-muted hover:text-ink'
+                                }`}
+                              >
+                                {opt.label}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* History Cards */}
+                    {history
+                      .filter(item => {
+                        const q = historySearch.toLowerCase().trim();
+                        if (!q) return true;
+                        return item.title.toLowerCase().includes(q) ||
+                          item.date.toLowerCase().includes(q) ||
+                          (item.notes && item.notes.toLowerCase().includes(q));
+                      })
+                      .sort((a, b) => {
+                        if (historySortBy === 'hydration_desc') return b.hydration - a.hydration;
+                        if (historySortBy === 'rating_desc') return (b.rating || 0) - (a.rating || 0);
+                        if (historySortBy === 'date_asc') return a.id - b.id;
+                        return b.id - a.id;
+                      })
+                      .map(item => (
+                        <div
+                          key={item.id}
+                          onClick={() => {
+                            setSelectedJournalBake(item);
+                            setJournalRating(item.rating || 5);
+                            setJournalNotes(item.notes || '');
+                          }}
+                          className="bg-card rounded-[20px] shadow-card border border-border-card overflow-hidden cursor-pointer hover:border-terracotta/40 transition-all active:scale-[0.99] group"
+                        >
+                          <div className="p-[17px]">
+                            <div className="flex justify-between items-start mb-3">
+                              <div>
+                                <div className="flex items-center gap-1.5">
+                                  <h3 className="font-serif text-[18px] font-semibold text-ink group-hover:text-terracotta transition-colors">{item.title}</h3>
+                                  <LucideIcon name="chevron-right" className="w-4 h-4 text-faint group-hover:text-terracotta" />
+                                </div>
+                                <p className="font-sans text-[10px] text-faint uppercase tracking-wider mt-0.5">{item.date}</p>
+                              </div>
+                              <div className="flex gap-0.5 text-warning">
+                                {[1, 2, 3, 4, 5].map(star => (
+                                  <LucideIcon
+                                    key={star}
+                                    name="star"
+                                    className={`w-3.5 h-3.5 ${star <= (item.rating || 5) ? 'fill-warning text-warning' : 'text-border-field'}`}
+                                  />
+                                ))}
+                              </div>
+                            </div>
+
+                            <div className="flex flex-col gap-2 mb-2">
+                              <div className="flex justify-between items-baseline border-b border-dotted border-border-leader pb-1">
+                                <span className="font-sans text-xs text-muted">Hydration</span>
+                                <span className="font-mono text-xs font-bold text-olive">{item.hydration}%</span>
+                              </div>
+                              <div className="flex justify-between items-baseline border-b border-dotted border-border-leader pb-1">
+                                <span className="font-sans text-xs text-muted">Total Flour</span>
+                                <span className="font-sans text-xs font-bold text-ink">{item.totalFlour}g</span>
+                              </div>
+                              <div className="flex justify-between items-baseline border-b border-dotted border-border-leader pb-1">
+                                <span className="font-sans text-xs text-muted">Starter</span>
+                                <span className="font-sans text-xs font-bold text-ink">{item.starterGrams ? `${item.starterGrams}g` : '100g'}</span>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="bg-oat px-[17px] py-3 flex justify-between items-center border-t border-border-card">
+                            <span className="font-serif italic text-xs text-muted line-clamp-1 flex-1 pr-2">
+                              {item.notes ? `"${item.notes}"` : 'Tap to add crumb notes & ratings...'}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleCloneBake(item);
+                              }}
+                              className="flex items-center gap-1 font-sans text-xs font-semibold text-terracotta ml-3 whitespace-nowrap active:opacity-70 transition-opacity"
+                            >
+                              <span>Clone</span>
+                              <LucideIcon name="copy" className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
                   </div>
                 )}
               </div>
@@ -1208,26 +1276,27 @@
                 ) : (
                   <div className="space-y-6">
                     <section className="space-y-4">
-                      <div className="flex justify-between items-center">
+                      <div className="flex justify-between items-center px-1">
                         <h2 className="font-serif italic text-xs uppercase tracking-[0.22em] text-muted">My Starters</h2>
-                        <button
-                          onClick={() => handleOpenFeedModal(starters[0])}
-                          className="bg-ink text-onDark shadow-btnInk rounded-[16px] px-3 py-1.5 flex items-center gap-1 font-sans text-[11px] uppercase font-bold tracking-widest active:scale-95"
-                        >
-                          <LucideIcon name="plus" className="w-3.5 h-3.5" /> Log Feed
-                        </button>
+                        <span className="font-sans text-[11px] text-faint">Tap card for feed journal</span>
                       </div>
 
                       {starters.map(starter => (
-                        <div key={starter.id} className="bg-card rounded-[20px] p-[17px] shadow-card border border-border-card relative overflow-hidden flex flex-col gap-4">
+                        <div
+                          key={starter.id}
+                          onClick={() => setSelectedHistoryStarter(starter)}
+                          className="bg-card rounded-[20px] p-[17px] shadow-card border border-border-card relative overflow-hidden flex flex-col gap-4 cursor-pointer hover:border-terracotta/40 transition-all active:scale-[0.99] group"
+                        >
                           <div className="flex justify-between items-start">
                             <div>
-                              <h3 className="font-serif text-[22px] font-semibold text-ink">{starter.name}</h3>
+                              <div className="flex items-center gap-1.5">
+                                <h3 className="font-serif text-[22px] font-semibold text-ink group-hover:text-terracotta transition-colors">{starter.name}</h3>
+                                <LucideIcon name="chevron-right" className="w-4 h-4 text-faint group-hover:text-terracotta" />
+                              </div>
                               <p className="font-sans text-xs text-muted mt-0.5">{starter.hydration}% Hydration • {starter.flourType}</p>
                             </div>
-                            <button
-                              onClick={() => handleOpenFeedModal(starter)}
-                              className={`px-3 py-1 rounded-full flex items-center gap-1.5 border transition-transform active:scale-95 ${
+                            <div
+                              className={`px-3 py-1 rounded-full flex items-center gap-1.5 border ${
                                 starter.status === 'active_peak' ? 'bg-terracotta/10 text-terracotta border-terracotta/20' : 'bg-warning/10 text-warning border-warning/20'
                               }`}
                             >
@@ -1235,17 +1304,17 @@
                               <span className="font-sans text-[10px] uppercase font-bold tracking-wider">
                                 {starter.status === 'active_peak' ? 'Active & Peak' : 'Hungry'}
                               </span>
-                            </button>
+                            </div>
                           </div>
 
                           <div className="border-t border-dashed border-border-card pt-3 flex justify-between">
                             <div className="flex flex-col">
                               <span className="font-sans text-[10px] text-faint uppercase font-bold tracking-wider mb-0.5">Last Fed</span>
-                              <span className="font-sans text-sm font-bold text-ink">{starter.lastFedText}</span>
+                              <span className="font-sans text-sm font-bold text-ink">{starter.lastFedText || 'Today'}</span>
                             </div>
                             <div className="flex flex-col">
                               <span className="font-sans text-[10px] text-faint uppercase font-bold tracking-wider mb-0.5">Ratio</span>
-                              <span className="font-mono text-sm font-bold text-ink">{starter.lastRatio}</span>
+                              <span className="font-mono text-sm font-bold text-ink">{starter.lastRatio || '1:2:2'}</span>
                             </div>
                             <div className="flex flex-col">
                               <span className="font-sans text-[10px] text-faint uppercase font-bold tracking-wider mb-0.5">Status</span>
@@ -1255,82 +1324,23 @@
                             </div>
                           </div>
 
-                          <div className="w-full bg-oat border border-border-field rounded-full h-2 overflow-hidden">
-                            <div className={`h-full rounded-full ${starter.status === 'active_peak' ? 'bg-terracotta w-[85%]' : 'bg-warning w-[25%]'}`} />
+                          <div className="flex items-center gap-3">
+                            <div className="flex-1 bg-oat border border-border-field rounded-full h-2 overflow-hidden">
+                              <div className={`h-full rounded-full ${starter.status === 'active_peak' ? 'bg-terracotta w-[85%]' : 'bg-warning w-[25%]'}`} />
+                            </div>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleOpenFeedModal(starter);
+                              }}
+                              className="px-3 py-1 bg-oat hover:bg-linen border border-border-field rounded-lg font-sans text-xs font-semibold text-ink"
+                            >
+                              Feed
+                            </button>
                           </div>
                         </div>
                       ))}
-                    </section>
-
-                    {/* Target Levain Calculator */}
-                    <section className="space-y-4 pt-2">
-                      <div className="flex items-center gap-2">
-                        <LucideIcon name="calculator" className="w-4 h-4 text-terracotta" />
-                        <h2 className="font-serif italic text-xs uppercase tracking-[0.22em] text-muted">
-                          Target Levain Calculator ({levainRatio})
-                        </h2>
-                      </div>
-
-                      <div className="bg-linen rounded-[20px] p-[17px] border border-border-card flex flex-col gap-4 relative overflow-hidden">
-                        <div className="flex justify-between items-end gap-3">
-                          <div className="space-y-1 flex-1">
-                            <label className="font-sans text-[10px] text-faint uppercase font-bold tracking-wider block">Target Weight (g)</label>
-                            <div className="relative">
-                              <input
-                                type="number"
-                                value={levainTarget}
-                                onChange={(e) => setLevainTarget(Math.max(0, Number(e.target.value) || 0))}
-                                className="w-full bg-oat border border-border-field rounded-[11px] px-3 py-2 font-mono text-[17px] font-bold text-ink focus:outline-none text-right pr-8"
-                              />
-                              <span className="absolute right-3 top-1/2 -translate-y-1/2 font-sans text-xs text-muted">g</span>
-                            </div>
-                          </div>
-
-                          <div className="space-y-1">
-                            <label className="font-sans text-[10px] text-faint uppercase font-bold tracking-wider block">Ratio</label>
-                            <select
-                              value={levainRatio}
-                              onChange={(e) => setLevainRatio(e.target.value)}
-                              className="bg-oat border border-border-field rounded-[11px] px-2.5 py-2 font-mono text-xs font-bold text-ink focus:outline-none"
-                            >
-                              <option value="1:1:1">1:1:1 (Fast)</option>
-                              <option value="1:2:2">1:2:2 (Standard)</option>
-                              <option value="1:3:3">1:3:3 (Slow)</option>
-                              <option value="1:4:4">1:4:4</option>
-                              <option value="1:5:5">1:5:5 (Overnight)</option>
-                            </select>
-                          </div>
-                        </div>
-
-                        <div className="flex flex-col gap-2.5 pt-1">
-                          <div className="flex items-baseline w-full">
-                            <span className="font-serif text-[15px] text-ink whitespace-nowrap">Starter Seed</span>
-                            <div className="flex-1 border-b-[1.5px] border-dotted border-border-leader mx-2 relative top-[-4px]"></div>
-                            <span className="font-sans text-[15px] font-bold text-ink mr-1">{ratioParts.seed}</span>
-                            <span className="font-sans text-[11px] text-faint">g</span>
-                          </div>
-                          <div className="flex items-baseline w-full">
-                            <span className="font-serif text-[15px] text-ink whitespace-nowrap">Flour</span>
-                            <div className="flex-1 border-b-[1.5px] border-dotted border-border-leader mx-2 relative top-[-4px]"></div>
-                            <span className="font-sans text-[15px] font-bold text-ink mr-1">{ratioParts.flour}</span>
-                            <span className="font-sans text-[11px] text-faint">g</span>
-                          </div>
-                          <div className="flex items-baseline w-full">
-                            <span className="font-serif text-[15px] text-ink whitespace-nowrap">Water</span>
-                            <div className="flex-1 border-b-[1.5px] border-dotted border-border-leader mx-2 relative top-[-4px]"></div>
-                            <span className="font-sans text-[15px] font-bold text-ink mr-1">{ratioParts.water}</span>
-                            <span className="font-sans text-[11px] text-faint">g</span>
-                          </div>
-                        </div>
-
-                        <div className="-mx-[17px] -mb-[17px] bg-terracotta text-onDark p-3.5 px-[17px] flex justify-between items-center">
-                          <span className="font-serif italic text-sm text-onDark">Total Build</span>
-                          <div className="flex items-baseline gap-1">
-                            <span className="font-mono font-bold text-base text-onDark">{ratioParts.seed + ratioParts.flour + ratioParts.water}</span>
-                            <span className="font-sans text-xs text-onDark/75">g</span>
-                          </div>
-                        </div>
-                      </div>
                     </section>
                   </div>
                 )}
@@ -1467,30 +1477,191 @@
             </div>
           )}
 
-          {/* Feed Modal */}
-          {selectedFeedStarter && (
+          {/* Starter History Modal */}
+          {selectedHistoryStarter && (
             <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-ink/40 backdrop-blur-sm animate-fadeIn">
-              <div className="bg-card max-w-sm w-full rounded-[20px] border border-border-card p-5 space-y-4 shadow-xl">
-                <div className="flex justify-between items-start">
+              <div className="bg-card max-w-md w-full max-h-[85vh] rounded-[24px] border border-border-card shadow-2xl flex flex-col overflow-hidden animate-scaleUp">
+                <div className="p-5 bg-card border-b border-border-card flex justify-between items-start">
                   <div>
-                    <span className="font-serif italic text-xs uppercase text-terracotta">Log Feed</span>
-                    <h3 className="font-serif text-lg font-semibold text-ink">{selectedFeedStarter.name}</h3>
-                    <p className="font-sans text-[11px] text-muted">{selectedFeedStarter.hydration}% Hydration · {selectedFeedStarter.flourType}</p>
+                    <span className="font-serif italic text-xs uppercase text-terracotta">Feeding Journal</span>
+                    <h3 className="font-serif text-2xl font-bold text-ink mt-0.5">{selectedHistoryStarter.name}</h3>
+                    <p className="font-sans text-xs text-muted">{selectedHistoryStarter.flourType} · {selectedHistoryStarter.hydration}% Hydration</p>
                   </div>
-                  <button onClick={() => setSelectedFeedStarter(null)} className="text-muted hover:text-ink">
+                  <button onClick={() => setSelectedHistoryStarter(null)} className="text-muted hover:text-ink p-1">
                     <LucideIcon name="x" className="w-5 h-5" />
                   </button>
                 </div>
 
+                <div className="p-5 overflow-y-auto space-y-3 flex-1">
+                  <div className="bg-oat/70 rounded-xl p-3.5 border border-border-field space-y-2">
+                    <div className="flex justify-between items-center">
+                      <span className="font-sans text-xs font-bold text-ink">Today (07:30 AM)</span>
+                      <span className="bg-linen border border-border-card text-terracotta font-mono font-bold text-xs px-2.5 py-0.5 rounded-full">1:2:2</span>
+                    </div>
+                    <div className="grid grid-cols-3 gap-2 text-center bg-card p-2 rounded-lg border border-border-card/60">
+                      <div><span className="text-[10px] text-faint uppercase font-bold block">Seed</span><span className="font-mono text-xs font-bold text-ink">25g</span></div>
+                      <div><span className="text-[10px] text-faint uppercase font-bold block">Flour</span><span className="font-mono text-xs font-bold text-ink">50g</span></div>
+                      <div><span className="text-[10px] text-faint uppercase font-bold block">Water</span><span className="font-mono text-xs font-bold text-ink">50g</span></div>
+                    </div>
+                    <p className="font-serif italic text-xs text-muted pl-1 border-l-2 border-terracotta/40">"Doubled vigorously in 4.5h at 24°C, sweet aroma"</p>
+                  </div>
+                </div>
+
+                <div className="p-4 bg-oat border-t border-border-card">
+                  <button
+                    onClick={() => {
+                      const t = selectedHistoryStarter;
+                      setSelectedHistoryStarter(null);
+                      handleOpenFeedModal(t);
+                    }}
+                    className="w-full bg-terracotta hover:bg-primary text-white py-3 rounded-[16px] font-sans font-semibold text-xs shadow-btnTerracotta active:scale-98 transition-all flex items-center justify-center gap-1.5"
+                  >
+                    <LucideIcon name="plus" className="w-4 h-4" />
+                    <span>Log New Feed for {selectedHistoryStarter.name}</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Loaf Journal Modal (History Tab) */}
+          {selectedJournalBake && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-ink/40 backdrop-blur-sm animate-fadeIn">
+              <div className="bg-card max-w-md w-full max-h-[88vh] rounded-[24px] border border-border-card shadow-2xl flex flex-col overflow-hidden animate-scaleUp">
+                <div className="p-5 bg-card border-b border-border-card flex justify-between items-start">
+                  <div>
+                    <span className="font-serif italic text-xs uppercase text-terracotta">Loaf Journal</span>
+                    <h3 className="font-serif text-2xl font-bold text-ink mt-0.5">{selectedJournalBake.title}</h3>
+                    <p className="font-sans text-xs text-muted">Baked on {selectedJournalBake.date}</p>
+                  </div>
+                  <button onClick={() => setSelectedJournalBake(null)} className="text-muted hover:text-ink p-1">
+                    <LucideIcon name="x" className="w-5 h-5" />
+                  </button>
+                </div>
+
+                <div className="p-5 overflow-y-auto space-y-5 flex-1">
+                  <div className="bg-linen p-4 rounded-xl border border-border-card space-y-3">
+                    <div className="flex justify-between items-center">
+                      <span className="font-sans text-xs font-bold text-ink uppercase tracking-wider">Crumb & Bake Rating</span>
+                      <div className="flex gap-1">
+                        {[1, 2, 3, 4, 5].map(star => (
+                          <button key={star} type="button" onClick={() => setJournalRating(star)} className="p-1 text-warning">
+                            <LucideIcon name="star" className={`w-5 h-5 ${star <= journalRating ? 'fill-warning text-warning' : 'text-border-field'}`} />
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="font-sans text-[11px] font-semibold text-muted block">Tasting Notes & Crumb Evaluation</label>
+                      <textarea
+                        rows="3"
+                        value={journalNotes}
+                        onChange={(e) => setJournalNotes(e.target.value)}
+                        placeholder="e.g. Crisp blistered ear, moist custardy crumb..."
+                        className="w-full bg-card border border-border-field rounded-xl p-3 font-serif text-xs text-ink focus:outline-none focus:ring-2 focus:ring-terracotta/20 resize-none"
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setHistory(prev => prev.map(b => b.id === selectedJournalBake.id ? { ...b, rating: journalRating, notes: journalNotes } : b));
+                        setSelectedJournalBake(prev => ({ ...prev, rating: journalRating, notes: journalNotes }));
+                      }}
+                      className="w-full py-2 bg-card hover:bg-oat border border-border-card rounded-lg font-sans text-xs font-semibold text-ink flex items-center justify-center gap-1.5"
+                    >
+                      <LucideIcon name="check-circle" className="w-3.5 h-3.5 text-olive" />
+                      <span>Save Journal Notes</span>
+                    </button>
+                  </div>
+
+                  <div className="bg-oat/70 p-3.5 rounded-xl border border-border-field space-y-2 text-xs">
+                    <div className="flex justify-between"><span className="text-muted">Hydration</span><span className="font-mono font-bold text-olive">{selectedJournalBake.hydration}%</span></div>
+                    <div className="flex justify-between"><span className="text-muted">Total Flour</span><span className="font-mono font-bold text-ink">{selectedJournalBake.totalFlour}g</span></div>
+                  </div>
+                </div>
+
+                <div className="p-4 bg-oat border-t border-border-card">
+                  <button
+                    onClick={() => {
+                      const t = selectedJournalBake;
+                      setSelectedJournalBake(null);
+                      handleCloneBake(t);
+                    }}
+                    className="w-full bg-terracotta hover:bg-primary text-white py-3 rounded-[16px] font-sans font-semibold text-xs shadow-btnTerracotta active:scale-98 transition-all flex items-center justify-center gap-1.5"
+                  >
+                    <LucideIcon name="copy" className="w-4 h-4" />
+                    <span>Clone this Formula to New Bake</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Dual-Mode Feed & Levain Modal */}
+          {selectedFeedStarter && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-ink/40 backdrop-blur-sm animate-fadeIn">
+              <div className="bg-card max-w-sm w-full rounded-[24px] border border-border-card p-5 space-y-4 shadow-2xl animate-scaleUp">
+                <div className="flex justify-between items-start">
+                  <div>
+                    <span className="font-serif italic text-xs uppercase text-terracotta">Feed & Levain Calculator</span>
+                    <h3 className="font-serif text-xl font-semibold text-ink">{selectedFeedStarter.name}</h3>
+                  </div>
+                  <button onClick={() => setSelectedFeedStarter(null)} className="text-muted hover:text-ink p-1">
+                    <LucideIcon name="x" className="w-5 h-5" />
+                  </button>
+                </div>
+
+                {/* Ratio vs Manual switcher */}
+                <div className="grid grid-cols-2 gap-1 p-1 bg-oat border border-border-field rounded-xl">
+                  <button
+                    type="button"
+                    onClick={() => setFeedMode('ratio')}
+                    className={`py-1.5 px-2 rounded-lg text-center font-sans text-xs font-semibold ${feedMode === 'ratio' ? 'bg-card text-ink shadow-sm' : 'text-muted'}`}
+                  >
+                    ⚖️ Ratio Mode
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setFeedMode('manual')}
+                    className={`py-1.5 px-2 rounded-lg text-center font-sans text-xs font-semibold ${feedMode === 'manual' ? 'bg-card text-ink shadow-sm' : 'text-muted'}`}
+                  >
+                    ✍️ Manual Mode
+                  </button>
+                </div>
+
                 <div className="space-y-3">
+                  {feedMode === 'ratio' && (
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] text-faint uppercase font-bold font-sans block">Target Ratio</label>
+                      <div className="grid grid-cols-4 gap-1.5">
+                        {['1:1:1', '1:2:2', '1:3:3', '1:4:4'].map(r => (
+                          <button
+                            key={r}
+                            type="button"
+                            onClick={() => {
+                              setFeedRatioPreset(r);
+                              const parts = r.split(':').map(Number);
+                              setFeedSeedGrams(Math.round(feedFlourGrams * (parts[0]/parts[1])));
+                              setFeedWaterGrams(Math.round(feedFlourGrams * (parts[2]/parts[1])));
+                            }}
+                            className={`py-1 rounded-lg font-mono text-xs font-bold border ${feedRatioPreset === r ? 'bg-linen border-terracotta text-terracotta' : 'bg-oat border-border-field text-muted'}`}
+                          >
+                            {r}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
                   <div className="grid grid-cols-3 gap-2">
                     <div>
                       <label className="text-[10px] text-faint uppercase font-bold font-sans">Seed (g)</label>
                       <input
                         type="number"
+                        disabled={feedMode === 'ratio'}
                         value={feedSeedGrams}
                         onChange={(e) => setFeedSeedGrams(Number(e.target.value) || 0)}
-                        className="w-full bg-oat border border-border-field rounded-[11px] p-2 text-center font-mono font-bold text-xs"
+                        className={`w-full bg-oat border border-border-field rounded-[11px] p-2 text-center font-mono font-bold text-xs ${feedMode === 'ratio' ? 'opacity-80 bg-linen/70' : ''}`}
                       />
                     </div>
                     <div>
@@ -1498,7 +1669,15 @@
                       <input
                         type="number"
                         value={feedFlourGrams}
-                        onChange={(e) => setFeedFlourGrams(Number(e.target.value) || 0)}
+                        onChange={(e) => {
+                          const val = Number(e.target.value) || 0;
+                          setFeedFlourGrams(val);
+                          if (feedMode === 'ratio') {
+                            const parts = feedRatioPreset.split(':').map(Number);
+                            setFeedSeedGrams(Math.round(val * (parts[0]/parts[1])));
+                            setFeedWaterGrams(Math.round(val * (parts[2]/parts[1])));
+                          }
+                        }}
                         className="w-full bg-oat border border-border-field rounded-[11px] p-2 text-center font-mono font-bold text-xs"
                       />
                     </div>
@@ -1506,18 +1685,24 @@
                       <label className="text-[10px] text-faint uppercase font-bold font-sans">Water (g)</label>
                       <input
                         type="number"
+                        disabled={feedMode === 'ratio'}
                         value={feedWaterGrams}
                         onChange={(e) => setFeedWaterGrams(Number(e.target.value) || 0)}
-                        className="w-full bg-oat border border-border-field rounded-[11px] p-2 text-center font-mono font-bold text-xs"
+                        className={`w-full bg-oat border border-border-field rounded-[11px] p-2 text-center font-mono font-bold text-xs ${feedMode === 'ratio' ? 'opacity-80 bg-linen/70' : ''}`}
                       />
                     </div>
+                  </div>
+
+                  <div className="bg-linen p-2 rounded-xl border border-border-card flex justify-between items-center text-xs">
+                    <span className="font-serif italic text-muted">Total Levain Build:</span>
+                    <span className="font-mono font-bold text-terracotta">{feedSeedGrams + feedFlourGrams + feedWaterGrams}g</span>
                   </div>
 
                   <div>
                     <label className="text-[10px] text-faint uppercase font-bold font-sans">Notes / Aroma</label>
                     <input
                       type="text"
-                      placeholder="e.g. Doubled in 4h, sweet yeasty aroma"
+                      placeholder="e.g. Doubled in 4h, sweet aroma"
                       value={feedNotes}
                       onChange={(e) => setFeedNotes(e.target.value)}
                       className="w-full bg-oat border border-border-field rounded-[11px] p-2 text-xs font-sans"
@@ -1526,8 +1711,7 @@
 
                   <button
                     onClick={() => {
-                      const minP = Math.min(feedSeedGrams, feedFlourGrams, feedWaterGrams) || 1;
-                      const ratioStr = `${Math.round(feedSeedGrams/minP)}:${Math.round(feedFlourGrams/minP)}:${Math.round(feedWaterGrams/minP)}`;
+                      const ratioStr = feedMode === 'ratio' ? feedRatioPreset : `${feedSeedGrams}:${feedFlourGrams}:${feedWaterGrams}`;
                       setStarters(prev => prev.map(s => s.id === selectedFeedStarter.id ? {
                         ...s,
                         lastFedText: 'Just now',
@@ -1539,7 +1723,7 @@
                     }}
                     className="w-full bg-terracotta hover:bg-primary text-white py-3 rounded-[16px] font-sans font-semibold text-xs shadow-btnTerracotta active:scale-98 transition-all"
                   >
-                    Save Feed & Start Rise Timer
+                    Save Feed & Refresh Status
                   </button>
                 </div>
               </div>

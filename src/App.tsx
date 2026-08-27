@@ -44,9 +44,6 @@ export default function App() {
     INITIAL_HISTORY
   );
 
-  // Screen Wake Lock API
-  const { isActive: wakeLockActive, toggle: toggleWakeLock } = useWakeLock();
-
   // 3 Tab Titles
   const tabTitles: Record<AppTab, string> = {
     active: 'Active Bakes',
@@ -83,8 +80,9 @@ export default function App() {
       ...session,
       status: 'completed',
       date: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
-      crumbRating: 5,
-      tastingNotes: 'Freshly baked artisanal loaf.',
+      crumbRating: session.crumbRating || 5,
+      tastingNotes: session.tastingNotes || '',
+      timeline: session.timeline || [],
     };
 
     setBakeHistory((prev) => [completedSession, ...prev]);
@@ -99,14 +97,52 @@ export default function App() {
       ...session,
       status: 'archived',
       date: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
+      timeline: session.timeline || [],
     };
 
     setBakeHistory((prev) => [archivedSession, ...prev]);
     setActiveBakes((prev) => prev.filter((s) => s.id !== sessionId));
   };
 
-  const handleCloneBake = (_session: BakeSession) => {
+  const handleCloneBake = (session: BakeSession) => {
+    const clonedSession: BakeSession = {
+      ...session,
+      id: Date.now(),
+      date: 'Today',
+      time: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
+      status: 'active',
+      currentStage: 'autolyse',
+      foldsCompleted: 0,
+      timers: {
+        autolyse: { targetEndTime: Date.now() + 1800 * 1000, durationSecs: 1800, remaining: 1800, running: true, done: false },
+        foldInterval: { targetEndTime: null, durationSecs: 1800, remaining: 1800, running: false, done: false },
+        bulkFerment: { targetEndTime: null, durationSecs: 28800, remaining: 28800, running: false, done: false },
+        coldRetard: { targetEndTime: null, durationSecs: 43200, remaining: null, running: false, done: false },
+        bakeLidOn: { targetEndTime: null, durationSecs: 1200, remaining: null, running: false, done: false },
+        bakeLidOff: { targetEndTime: null, durationSecs: 1200, remaining: null, running: false, done: false },
+      },
+      timeline: [
+        {
+          id: `tl-${Date.now()}`,
+          timestamp: Date.now(),
+          timeStr: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
+          stageName: 'Setup',
+          message: `Cloned formula from ${session.title} (${session.hydration}% hydration)`,
+          type: 'start',
+        },
+      ],
+      crumbRating: undefined,
+      tastingNotes: undefined,
+    };
+
+    setActiveBakes((prev) => [clonedSession, ...prev]);
     setActiveTab('active');
+  };
+
+  const handleUpdateHistoryBake = (updated: BakeSession) => {
+    setBakeHistory((prev) =>
+      prev.map((s) => (s.id === updated.id ? updated : s))
+    );
   };
 
   const handleAddStarter = (newStarter: StarterProfile) => {
@@ -135,8 +171,6 @@ export default function App() {
       <Header
         title={tabTitles[activeTab]}
         user={user}
-        wakeLockActive={wakeLockActive}
-        onToggleWakeLock={toggleWakeLock}
         onOpenAuth={() => setIsWelcomeModalOpen(true)}
       />
 
@@ -160,6 +194,7 @@ export default function App() {
             user={user}
             history={bakeHistory}
             onCloneBake={handleCloneBake}
+            onUpdateBake={handleUpdateHistoryBake}
             onOpenAuth={() => setIsWelcomeModalOpen(true)}
           />
         )}

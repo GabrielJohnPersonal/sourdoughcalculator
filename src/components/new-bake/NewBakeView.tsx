@@ -39,8 +39,7 @@ export const NewBakeView: React.FC<NewBakeViewProps> = ({
 
   // ================= SECTION 3: FLOUR BLEND =================
   const [flourBlend, setFlourBlend] = useState<FlourBlendItem[]>([
-    { id: '1', name: 'Bread Flour', percentage: 80 },
-    { id: '2', name: 'Whole Wheat', percentage: 20 },
+    { id: '1', name: 'Bread Flour', percentage: 100 },
   ]);
 
   const handleSelectSizePreset = (preset: 'small' | 'medium' | 'large' | 'custom') => {
@@ -98,12 +97,30 @@ export const NewBakeView: React.FC<NewBakeViewProps> = ({
 
   const handleAddFlour = () => {
     const newId = String(Date.now());
-    setFlourBlend((prev) => [...prev, { id: newId, name: 'Dark Rye', percentage: 10 }]);
+    setFlourBlend((prev) => {
+      // Deduct from primary flour if it has room, or append cleanly
+      if (prev.length > 0 && prev[0].percentage > 10) {
+        const updatedFirst = { ...prev[0], percentage: prev[0].percentage - 10 };
+        return [updatedFirst, ...prev.slice(1), { id: newId, name: 'Dark Rye', percentage: 10 }];
+      }
+      return [...prev, { id: newId, name: 'Dark Rye', percentage: 10 }];
+    });
   };
 
   const handleRemoveFlour = (id: string) => {
     if (flourBlend.length <= 1) return;
-    setFlourBlend((prev) => prev.filter((item) => item.id !== id));
+    setFlourBlend((prev) => {
+      const remaining = prev.filter((item) => item.id !== id);
+      if (remaining.length === 1) {
+        return [{ ...remaining[0], percentage: 100 }];
+      }
+      const secondarySum = remaining.slice(1).reduce((acc, f) => acc + (Number(f.percentage) || 0), 0);
+      const primaryPct = Math.max(0, 100 - secondarySum);
+      return [
+        { ...remaining[0], percentage: primaryPct },
+        ...remaining.slice(1),
+      ];
+    });
   };
 
   const handleUpdateFlour = (id: string, field: 'name' | 'percentage', val: string | number) => {
@@ -456,28 +473,31 @@ export const NewBakeView: React.FC<NewBakeViewProps> = ({
 
         <div className="bg-card rounded-[20px] shadow-sm border border-border-card p-4 space-y-3">
           {flourBlend.map((item) => (
-            <div key={item.id} className="flex items-center gap-3">
+            <div key={item.id} className="flex items-center gap-2.5">
               <input
                 type="text"
                 value={item.name}
+                placeholder="Flour name (e.g. Bread Flour)"
                 onChange={(e) => handleUpdateFlour(item.id, 'name', e.target.value)}
-                className="flex-1 bg-oat border border-border-field rounded-lg px-3 py-2 font-serif text-sm text-ink focus:outline-none"
+                className="flex-1 min-w-0 bg-oat border border-border-field rounded-lg px-2.5 py-2 font-serif text-xs sm:text-sm text-ink focus:outline-none focus:ring-1 focus:ring-terracotta/30"
               />
-              <div className="w-24 relative">
+              <div className="w-20 sm:w-24 relative flex-shrink-0">
                 <input
                   type="number"
                   min="0"
                   max="100"
                   value={item.percentage}
                   onChange={(e) => handleUpdateFlour(item.id, 'percentage', e.target.value)}
-                  className="w-full bg-oat border border-border-field rounded-[11px] px-2 py-2 font-mono font-bold text-sm text-ink text-center pr-6 focus:outline-none"
+                  className="w-full bg-oat border border-border-field rounded-[11px] px-2 py-2 font-mono font-bold text-xs sm:text-sm text-ink text-center pr-6 focus:outline-none focus:ring-1 focus:ring-terracotta/30"
                 />
-                <span className="absolute right-2 top-1/2 -translate-y-1/2 font-mono text-xs text-muted">%</span>
+                <span className="absolute right-2 top-1/2 -translate-y-1/2 font-mono text-xs text-muted pointer-events-none">%</span>
               </div>
               <button
+                type="button"
                 onClick={() => handleRemoveFlour(item.id)}
                 disabled={flourBlend.length <= 1}
-                className="text-disabled hover:text-danger p-1 disabled:opacity-30"
+                className="text-disabled hover:text-danger p-1 disabled:opacity-25 flex-shrink-0 transition-colors"
+                title="Remove flour"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -486,7 +506,7 @@ export const NewBakeView: React.FC<NewBakeViewProps> = ({
 
           <button
             onClick={handleAddFlour}
-            className="w-full py-2 bg-oat border border-dashed border-border-field rounded-xl font-sans text-xs font-bold text-terracotta uppercase tracking-wider flex items-center justify-center gap-1 hover:bg-linen"
+            className="w-full py-2 bg-oat border border-dashed border-border-field rounded-xl font-sans text-xs font-bold text-terracotta uppercase tracking-wider flex items-center justify-center gap-1 hover:bg-linen transition-colors"
           >
             <Plus className="w-3.5 h-3.5" /> Add Flour Type
           </button>
@@ -513,33 +533,36 @@ export const NewBakeView: React.FC<NewBakeViewProps> = ({
               </div>
             ))}
 
+            {/* Consolidated Starter Row */}
             <div className="flex items-baseline w-full">
-              <span className="font-serif text-[15px] text-ink whitespace-nowrap">Starter Flour</span>
+              <div className="flex flex-col">
+                <span className="font-serif text-[15px] text-ink whitespace-nowrap">Starter</span>
+                <span className="font-sans text-[10px] text-faint">
+                  ({computedStarterFlour}g flour / {computedStarterWater}g water)
+                </span>
+              </div>
               <div className="flex-1 border-b-[1.5px] border-dotted border-border-leader mx-2 relative top-[-4px]" />
               <div className="flex items-baseline gap-2 text-right min-w-[85px]">
-                <span className="font-sans text-[15px] font-bold text-ink">{computedStarterFlour}<span className="text-faint text-[10px] ml-0.5">g</span></span>
-                <span className="font-mono text-[12px] text-muted w-10">{totalFlour > 0 ? Math.round((computedStarterFlour / (totalFlour * loaves)) * 1000) / 10 : 0}%</span>
+                <span className="font-sans text-[15px] font-bold text-ink">{computedTotalStarter}<span className="text-faint text-[10px] ml-0.5">g</span></span>
+                <span className="font-mono text-[12px] text-muted w-10">
+                  {totalFlour > 0 ? Math.round((computedTotalStarter / (totalFlour * loaves)) * 1000) / 10 : 0}%
+                </span>
               </div>
             </div>
 
+            {/* Main Water Row */}
             <div className="flex items-baseline w-full">
-              <span className="font-serif text-[15px] text-ink whitespace-nowrap">Main Water</span>
+              <span className="font-serif text-[15px] text-ink whitespace-nowrap">Water</span>
               <div className="flex-1 border-b-[1.5px] border-dotted border-border-leader mx-2 relative top-[-4px]" />
               <div className="flex items-baseline gap-2 text-right min-w-[85px]">
                 <span className="font-sans text-[15px] font-bold text-ink">{mainWaterGrams}<span className="text-faint text-[10px] ml-0.5">g</span></span>
-                <span className="font-mono text-[12px] text-muted w-10">{totalFlour > 0 ? Math.round((mainWaterGrams / (totalFlour * loaves)) * 1000) / 10 : 0}%</span>
+                <span className="font-mono text-[12px] text-muted w-10">
+                  {totalFlour > 0 ? Math.round((mainWaterGrams / (totalFlour * loaves)) * 1000) / 10 : 0}%
+                </span>
               </div>
             </div>
 
-            <div className="flex items-baseline w-full">
-              <span className="font-serif text-[15px] text-ink whitespace-nowrap">Starter Water</span>
-              <div className="flex-1 border-b-[1.5px] border-dotted border-border-leader mx-2 relative top-[-4px]" />
-              <div className="flex items-baseline gap-2 text-right min-w-[85px]">
-                <span className="font-sans text-[15px] font-bold text-ink">{computedStarterWater}<span className="text-faint text-[10px] ml-0.5">g</span></span>
-                <span className="font-mono text-[12px] text-muted w-10">{totalFlour > 0 ? Math.round((computedStarterWater / (totalFlour * loaves)) * 1000) / 10 : 0}%</span>
-              </div>
-            </div>
-
+            {/* Salt Row */}
             <div className="flex items-baseline w-full">
               <span className="font-serif text-[15px] text-ink whitespace-nowrap">Salt</span>
               <div className="flex-1 border-b-[1.5px] border-dotted border-border-leader mx-2 relative top-[-4px]" />
