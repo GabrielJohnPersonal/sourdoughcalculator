@@ -1,0 +1,14 @@
+{
+  "appId": "com.sourdoughcalculator.app",
+  "appName": "Sourdough Calculator",
+  "webDir": "dist",
+  "bundledWebRuntime": false,
+  "server": {
+    "androidScheme": "https"
+  },
+  "android": {
+    "allowMixedContent": true,
+    "captureInput": true,
+    "backgroundColor": "#fff9ef"
+  }
+}

@@ -4,6 +4,18 @@ This document tracks all user-requested design decisions, feature iterations, an
 
 ---
 
+## [2026-08-27] — Android Standalone Native App (.APK) Architecture
+
+### 🤖 Native Android Packaging (Capacitor 6)
+* **Capacitor Configuration**:
+  * Created `capacitor.config.json` defining `appId: com.sourdoughcalculator.app` and `appName: Sourdough Calculator`.
+  * Added native plugins for Android: `@capacitor/android`, `@capacitor/haptics`, `@capacitor/local-notifications`.
+* **Automated Cloud APK Build Workflow**:
+  * Created `.github/workflows/android-build.yml` to compile a native standalone Android `.apk` directly inside GitHub Actions.
+  * Allows downloading and installing the standalone Android APK directly on physical Android phones without needing local Android Studio installs.
+
+---
+
 ## [2026-08-27] — Banneton Size Conditional Flour Input & Inline Parameters Row
 
 ### 🥖 Section 1: Loaf & Banneton Refinement
