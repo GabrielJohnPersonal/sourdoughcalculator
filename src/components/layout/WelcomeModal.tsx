@@ -147,7 +147,7 @@ export const WelcomeModal: React.FC<WelcomeModalProps> = ({
 
             <button
               onClick={() => {
-                onSelectAction('new');
+                onSelectAction('active');
                 onClose();
               }}
               className="w-full bg-oat hover:bg-linen border border-border-field rounded-xl p-3 flex items-center justify-between text-left transition-all active:scale-98"

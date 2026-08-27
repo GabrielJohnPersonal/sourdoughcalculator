@@ -1,13 +1,11 @@
 import React, { useState } from 'react';
 import {
-  Wheat,
   Plus,
   Flame,
   Utensils,
   Calculator,
   Lock,
   X,
-  Clock,
   ShieldCheck,
 } from 'lucide-react';
 import { StarterProfile, UserProfile, StarterFeedEntry } from '../../types';

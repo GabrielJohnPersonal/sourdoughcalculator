@@ -105,7 +105,7 @@ export default function App() {
     setActiveBakes((prev) => prev.filter((s) => s.id !== sessionId));
   };
 
-  const handleCloneBake = (session: BakeSession) => {
+  const handleCloneBake = (_session: BakeSession) => {
     setActiveTab('active');
   };
 
