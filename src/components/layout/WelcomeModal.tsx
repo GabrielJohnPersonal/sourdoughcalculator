@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Scale, Wheat, ScrollText, Sparkles, X, ArrowRight, ShieldCheck, Tag } from 'lucide-react';
+import { Scale, Wheat, ScrollText, Sparkles, X, ArrowRight, ShieldCheck } from 'lucide-react';
 import { AppTab, UserProfile } from '../../types';
 
 interface WelcomeModalProps {
@@ -21,10 +21,11 @@ export const WelcomeModal: React.FC<WelcomeModalProps> = ({
   if (!isOpen) return null;
 
   const handleGoogleSignIn = () => {
+    // NOTE: this is still a local mock — no real OAuth. Placeholder identity only.
     onSignIn({
       id: 'usr-google',
-      email: 'gabrieljohnpersonal@gmail.com',
-      name: 'Gabriel',
+      email: 'baker@example.com',
+      name: 'Baker',
       signedInAt: Date.now(),
     });
     onClose();
@@ -203,30 +204,15 @@ export const WelcomeModal: React.FC<WelcomeModalProps> = ({
             </button>
           </div>
 
-          {/* What's New Section */}
-          <div className="border-t border-dashed border-border-field pt-3 space-y-2">
+          {/* What's New — one line */}
+          <div className="border-t border-dashed border-border-field pt-3 space-y-1.5">
             <div className="flex items-center gap-1.5 text-terracotta">
               <Sparkles className="w-3.5 h-3.5" strokeWidth={2} />
               <span className="font-sans text-[11px] font-bold uppercase tracking-wider">What's New</span>
             </div>
-            <ul className="font-sans text-xs text-muted space-y-1 pl-4 list-disc marker:text-terracotta">
-              <li>Itemized flour blend breakdown in live formula</li>
-              <li>Named sourdough starters with live peak health indicators</li>
-              <li>Drift-free wall-clock timers and live kitchen timeline</li>
-            </ul>
-          </div>
-
-          {/* Promo / Banner Slot */}
-          <div className="bg-linen p-3 rounded-xl border border-terracotta/20 flex items-center gap-3">
-            <Tag className="w-5 h-5 text-terracotta flex-shrink-0" strokeWidth={2} />
-            <div className="flex-1">
-              <span className="font-sans text-[10px] uppercase font-bold text-terracotta tracking-wider block">
-                Artisanal Bakery Spotlight
-              </span>
-              <p className="font-sans text-xs text-ink">
-                Get 15% off Handcrafted Rattan Bannetons with code <span className="font-mono font-bold">CRUST15</span>
-              </p>
-            </div>
+            <p className="font-sans text-xs text-muted leading-relaxed">
+              Custom bake steps with drift-free wall-clock timers, a temperature-based bulk-fermentation estimate, and starters at any hydration.
+            </p>
           </div>
         </div>
 

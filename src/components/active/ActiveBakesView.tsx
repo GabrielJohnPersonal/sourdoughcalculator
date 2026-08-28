@@ -1,16 +1,25 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Scale,
   Plus,
-  ArrowRight,
   ArrowLeft,
   CheckCircle2,
   ChevronRight,
-  Thermometer,
+  ChevronDown,
   Clock,
+  Thermometer,
+  X,
 } from 'lucide-react';
-import { BakeSession, BakeStage, StarterProfile, UserProfile } from '../../types';
-import { getFermentationSuggestion } from '../../utils/fermentationEngine';
+import {
+  BakeSession,
+  BakeStep,
+  StageActivityLog,
+  StarterProfile,
+  UserProfile,
+} from '../../types';
+import { useTimer } from '../../hooks/useTimer';
+import { formatSeconds, formatTimeOnly } from '../../utils/formatters';
+import { getFermentationSuggestion, TEMP_GUIDE } from '../../utils/fermentationEngine';
 import { playKitchenChime } from '../../utils/audioSynthesizer';
 import { NewBakeView } from '../new-bake/NewBakeView';
 
@@ -25,6 +34,441 @@ interface ActiveBakesViewProps {
   onOpenAuth: () => void;
 }
 
+const TEMP_OPTIONS = [...TEMP_GUIDE].sort((a, b) => a.c - b.c);
+
+const clockTime = (ms: number) =>
+  new Date(ms).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+
+const timelineEntry = (
+  stageName: string,
+  message: string,
+  type: StageActivityLog['type'],
+): StageActivityLog => {
+  const ts = Date.now();
+  return {
+    id: `tl-${ts}-${Math.random().toString(36).slice(2, 6)}`,
+    timestamp: ts,
+    timeStr: clockTime(ts),
+    stageName,
+    message,
+    type,
+  };
+};
+
+/** Re-renders on an interval so elapsed / estimate readouts tick. */
+function useNow(intervalMs = 1000): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), intervalMs);
+    return () => clearInterval(id);
+  }, [intervalMs]);
+  return now;
+}
+
+// ---------------------------------------------------------------------------
+
+interface TimedStepRowProps {
+  step: BakeStep;
+  onComplete: (stepId: string) => void;
+}
+
+/** In-progress step that has a timer set — drift-free countdown via useTimer. */
+const TimedStepRow: React.FC<TimedStepRowProps> = ({ step, onComplete }) => {
+  const targetSecs = step.targetDurationSecs ?? 0;
+  const endsAt = step.startedAt + targetSecs * 1000;
+  const { remaining, isDone } = useTimer({
+    initialDurationSecs: targetSecs,
+    initialTargetEndTime: endsAt,
+    initialRunning: endsAt > Date.now(),
+  });
+  const over = isDone || endsAt <= Date.now();
+
+  return (
+    <li className="space-y-0.5">
+      <div className="flex items-baseline gap-2">
+        <span
+          className={`w-1.5 h-1.5 rounded-full flex-shrink-0 self-center ${
+            over ? 'bg-warning' : 'bg-terracotta'
+          }`}
+        />
+        <span className="font-serif text-[15px] text-ink whitespace-nowrap">{step.name}</span>
+        <span className="flex-1 border-b border-dotted border-border-leader" />
+        <span
+          className={`font-mono text-[11px] whitespace-nowrap tabular-nums ${
+            over ? 'text-warning font-bold' : 'text-terracotta'
+          }`}
+        >
+          {over ? 'timer up' : `-${formatSeconds(remaining)}`}
+        </span>
+        <button
+          onClick={() => onComplete(step.id)}
+          className="font-sans text-[10px] uppercase font-bold tracking-wider text-muted hover:text-ink active:scale-98 transition-all"
+        >
+          Done
+        </button>
+      </div>
+      {step.note && (
+        <p className="font-serif italic text-[11px] text-muted pl-3.5">{step.note}</p>
+      )}
+    </li>
+  );
+};
+
+// ---------------------------------------------------------------------------
+
+interface BakeCardProps {
+  session: BakeSession;
+  onUpdateSession: (session: BakeSession) => void;
+  onCompleteSession: (sessionId: number) => void;
+  onArchiveSession: (sessionId: number) => void;
+  onViewRecipe: (session: BakeSession) => void;
+}
+
+const BakeCard: React.FC<BakeCardProps> = ({
+  session,
+  onUpdateSession,
+  onCompleteSession,
+  onArchiveSession,
+  onViewRecipe,
+}) => {
+  const now = useNow(1000);
+  const [logging, setLogging] = useState(false);
+  const [stepName, setStepName] = useState('');
+  const [stepTimerMin, setStepTimerMin] = useState('');
+  const [stepNote, setStepNote] = useState('');
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
+
+  const elapsedSecs = Math.max(0, Math.floor((now - session.startedAt) / 1000));
+
+  const roomTempC = session.roomTempC ?? 23;
+  const sugg = getFermentationSuggestion(roomTempC);
+  const estTotalSecs = sugg ? sugg.hrs * 3600 : 0;
+  const fermentPct = estTotalSecs
+    ? Math.min(100, Math.max(0, Math.round((elapsedSecs / estTotalSecs) * 100)))
+    : 0;
+  const estFinish = estTotalSecs ? formatTimeOnly(session.startedAt + estTotalSecs * 1000) : '—';
+
+  const resetForm = () => {
+    setStepName('');
+    setStepTimerMin('');
+    setStepNote('');
+    setLogging(false);
+  };
+
+  const addStep = () => {
+    const name = stepName.trim();
+    if (!name) return;
+    const mins = parseFloat(stepTimerMin);
+    const hasTimer = Number.isFinite(mins) && mins > 0;
+    const step: BakeStep = {
+      id: `step-${Date.now()}`,
+      name,
+      startedAt: Date.now(),
+      targetDurationSecs: hasTimer ? Math.round(mins * 60) : undefined,
+      note: stepNote.trim() || undefined,
+    };
+    onUpdateSession({
+      ...session,
+      steps: [...session.steps, step],
+      timeline: [
+        ...session.timeline,
+        timelineEntry(
+          name,
+          hasTimer ? `Started "${name}" · ${mins}m timer` : `Logged "${name}"`,
+          'start',
+        ),
+      ],
+    });
+    resetForm();
+  };
+
+  const completeStep = (stepId: string) => {
+    const target = session.steps.find((s) => s.id === stepId);
+    onUpdateSession({
+      ...session,
+      steps: session.steps.map((s) =>
+        s.id === stepId ? { ...s, completedAt: Date.now() } : s,
+      ),
+      timeline: [
+        ...session.timeline,
+        timelineEntry(target?.name ?? 'Step', `Completed "${target?.name ?? 'step'}"`, 'complete'),
+      ],
+    });
+  };
+
+  const setRoomTemp = (c: number) => onUpdateSession({ ...session, roomTempC: c });
+
+  return (
+    <div className="flex flex-col bg-card rounded-[20px] border border-border-card shadow-[0_8px_24px_rgba(51,48,42,0.06),inset_0_1px_0_rgba(255,255,255,1)] overflow-hidden">
+      {/* Header — name, start time, ticking elapsed clock */}
+      <div className="p-[17px] pb-3 bg-card border-b border-border-card">
+        <div className="flex justify-between items-start gap-3">
+          <div>
+            <h2 className="font-serif text-[22px] font-semibold text-ink leading-tight">
+              {session.title}
+            </h2>
+            <p className="font-sans text-xs text-muted mt-0.5">
+              {session.loaves} {session.loaves === 1 ? 'loaf' : 'loaves'} · {session.hydration}% hydration · {session.totalFlour}g flour
+            </p>
+          </div>
+          <div className="text-right flex-shrink-0">
+            <div className="font-mono text-[10px] text-faint uppercase tracking-wider whitespace-nowrap">
+              Started {clockTime(session.startedAt)}
+            </div>
+            <div className="font-mono text-[13px] font-bold text-ink tabular-nums mt-0.5">
+              {formatSeconds(elapsedSecs)}
+            </div>
+          </div>
+        </div>
+        <button
+          onClick={() => onViewRecipe(session)}
+          className="mt-2 font-sans text-[11px] font-semibold text-muted hover:text-terracotta flex items-center gap-0.5 active:scale-98 transition-all"
+        >
+          View full recipe <ChevronRight className="w-3.5 h-3.5" />
+        </button>
+      </div>
+
+      {/* Steps — freeform log with optional per-step timers */}
+      <div className="p-[17px] space-y-3">
+        <div className="flex items-center justify-between">
+          <h3 className="font-sans text-[11px] uppercase font-bold text-muted tracking-wider">
+            Steps
+          </h3>
+          {!logging && (
+            <button
+              onClick={() => setLogging(true)}
+              className="font-sans text-[11px] font-bold text-terracotta uppercase tracking-wider flex items-center gap-1 hover:opacity-80 active:scale-98 transition-all"
+            >
+              <Plus className="w-3.5 h-3.5" /> Log step
+            </button>
+          )}
+        </div>
+
+        {logging && (
+          <div className="bg-oat border border-border-field rounded-xl p-3 space-y-2">
+            <input
+              autoFocus
+              type="text"
+              value={stepName}
+              onChange={(e) => setStepName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') addStep();
+                if (e.key === 'Escape') resetForm();
+              }}
+              placeholder="Step name (e.g. Autolyse, Coil fold, Shape)"
+              className="w-full bg-card border border-border-field rounded-lg px-2.5 py-2 font-serif text-sm text-ink focus:outline-none focus:ring-2 focus:ring-terracotta/20"
+            />
+            <div className="flex gap-2">
+              <div className="relative w-24 flex-shrink-0">
+                <input
+                  type="number"
+                  min="0"
+                  value={stepTimerMin}
+                  onChange={(e) => setStepTimerMin(e.target.value)}
+                  placeholder="Timer"
+                  className="w-full bg-card border border-border-field rounded-lg px-2.5 py-2 font-mono text-xs text-ink text-right pr-9 focus:outline-none focus:ring-2 focus:ring-terracotta/20"
+                />
+                <span className="absolute right-2.5 top-1/2 -translate-y-1/2 font-sans text-[10px] text-muted pointer-events-none">
+                  min
+                </span>
+              </div>
+              <input
+                type="text"
+                value={stepNote}
+                onChange={(e) => setStepNote(e.target.value)}
+                placeholder="Note (optional)"
+                className="flex-1 min-w-0 bg-card border border-border-field rounded-lg px-2.5 py-2 font-serif text-xs text-ink focus:outline-none focus:ring-2 focus:ring-terracotta/20"
+              />
+            </div>
+            <div className="flex gap-2 justify-end">
+              <button
+                onClick={resetForm}
+                className="px-3 py-1.5 font-sans text-xs text-muted hover:text-ink"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={addStep}
+                disabled={!stepName.trim()}
+                className="px-3 py-1.5 bg-terracotta hover:bg-primary disabled:opacity-40 text-white rounded-lg font-sans text-xs font-semibold active:scale-98 transition-all"
+              >
+                Add step
+              </button>
+            </div>
+          </div>
+        )}
+
+        {session.steps.length === 0 && !logging ? (
+          <p className="font-sans text-xs text-muted">
+            No steps logged yet. Use Log step when you begin one.
+          </p>
+        ) : (
+          <ul className="space-y-2">
+            {session.steps.map((step) => {
+              if (step.completedAt) {
+                return (
+                  <li key={step.id} className="space-y-0.5">
+                    <div className="flex items-baseline gap-2">
+                      <span className="w-1.5 h-1.5 rounded-full bg-olive flex-shrink-0 self-center" />
+                      <span className="font-serif text-[15px] text-ink whitespace-nowrap">
+                        {step.name}
+                      </span>
+                      <span className="flex-1 border-b border-dotted border-border-leader" />
+                      <span className="font-mono text-[11px] text-muted whitespace-nowrap">
+                        {clockTime(step.startedAt)} – {clockTime(step.completedAt)}
+                      </span>
+                    </div>
+                    {step.note && (
+                      <p className="font-serif italic text-[11px] text-muted pl-3.5">{step.note}</p>
+                    )}
+                  </li>
+                );
+              }
+              if (step.targetDurationSecs) {
+                return <TimedStepRow key={step.id} step={step} onComplete={completeStep} />;
+              }
+              const stepElapsed = Math.max(0, Math.floor((now - step.startedAt) / 1000));
+              return (
+                <li key={step.id} className="space-y-0.5">
+                  <div className="flex items-baseline gap-2">
+                    <span className="w-1.5 h-1.5 rounded-full bg-terracotta flex-shrink-0 self-center" />
+                    <span className="font-serif text-[15px] text-ink whitespace-nowrap">
+                      {step.name}
+                    </span>
+                    <span className="flex-1 border-b border-dotted border-border-leader" />
+                    <span className="font-mono text-[11px] text-muted whitespace-nowrap tabular-nums">
+                      {formatSeconds(stepElapsed)}
+                    </span>
+                    <button
+                      onClick={() => completeStep(step.id)}
+                      className="font-sans text-[10px] uppercase font-bold tracking-wider text-muted hover:text-ink active:scale-98 transition-all"
+                    >
+                      Done
+                    </button>
+                  </div>
+                  {step.note && (
+                    <p className="font-serif italic text-[11px] text-muted pl-3.5">{step.note}</p>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </div>
+
+      {/* Bulk fermentation — temperature drives a live estimate and a moving % */}
+      <div className="p-[17px] border-t border-border-card space-y-2.5">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-1.5">
+            <Thermometer className="w-3.5 h-3.5 text-terracotta" />
+            <h3 className="font-sans text-[11px] uppercase font-bold text-muted tracking-wider">
+              Bulk fermentation
+            </h3>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <span className="font-sans text-[10px] text-faint uppercase tracking-wider">Room</span>
+            <div className="relative">
+              <select
+                value={sugg ? sugg.c : roomTempC}
+                onChange={(e) => setRoomTemp(Number(e.target.value))}
+                className="appearance-none bg-oat border border-border-field rounded-lg pl-2.5 pr-7 py-1 font-mono text-xs font-bold text-ink focus:outline-none focus:ring-2 focus:ring-terracotta/20"
+              >
+                {TEMP_OPTIONS.map((p) => (
+                  <option key={p.c} value={p.c}>
+                    {p.c}°C
+                  </option>
+                ))}
+              </select>
+              <ChevronDown className="w-3.5 h-3.5 text-faint absolute right-1.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+            </div>
+          </div>
+        </div>
+
+        <div className="h-2 bg-oat border border-border-field rounded-full overflow-hidden">
+          <div
+            className="h-full bg-terracotta rounded-full transition-all"
+            style={{ width: `${fermentPct}%` }}
+          />
+        </div>
+
+        <p className="font-sans text-[11px] text-muted leading-relaxed">
+          {sugg ? (
+            <>
+              ≈ {sugg.hrs}h at {sugg.c}°C · ~{sugg.rise}% rise · est. ready{' '}
+              <span className="font-mono text-ink">{estFinish}</span> ·{' '}
+              <span className="font-mono font-bold text-terracotta tabular-nums">{fermentPct}%</span>
+            </>
+          ) : (
+            'Set a room temperature to estimate bulk fermentation.'
+          )}
+        </p>
+      </div>
+
+      {/* Activity timeline */}
+      <div className="p-[17px] pt-4 border-t border-border-card bg-card/60">
+        <h4 className="font-sans text-[10px] text-faint uppercase font-bold tracking-wider mb-3 flex items-center gap-1.5">
+          <Clock className="w-3.5 h-3.5 text-muted" /> Activity Timeline
+        </h4>
+
+        <div className="flex flex-col gap-3 relative ml-2">
+          <div className="absolute left-0 top-2 bottom-2 w-px border-l border-dashed border-border-leader" />
+
+          {session.timeline.map((item) => (
+            <div key={item.id} className="relative pl-5 flex flex-col">
+              <div className="absolute left-[-4px] top-1.5 w-2 h-2 rounded-full bg-terracotta ring-2 ring-card" />
+              <span className="font-mono text-[11px] font-bold text-olive">{item.timeStr}</span>
+              <span className="font-sans text-[12px] text-muted">{item.message}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Footer — Discard (distinct from Complete) + Mark complete */}
+      <div className="bg-oat border-t border-border-card px-4 py-3">
+        {confirmDiscard ? (
+          <div className="flex items-center justify-between gap-2">
+            <span className="font-sans text-xs text-ink font-semibold">Discard this bake?</span>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setConfirmDiscard(false)}
+                className="font-sans text-xs text-muted hover:text-ink px-2 py-1"
+              >
+                Keep
+              </button>
+              <button
+                onClick={() => onArchiveSession(session.id)}
+                className="font-sans text-xs font-semibold text-white bg-danger hover:opacity-90 rounded-lg px-3 py-1 active:scale-98 transition-all"
+              >
+                Discard
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="flex items-center justify-between">
+            <button
+              onClick={() => setConfirmDiscard(true)}
+              className="font-sans font-semibold text-xs text-muted hover:text-danger flex items-center gap-1 active:scale-98 transition-all"
+            >
+              <X className="w-3.5 h-3.5" /> Discard
+            </button>
+            <button
+              onClick={() => {
+                onCompleteSession(session.id);
+                playKitchenChime();
+              }}
+              className="font-sans font-semibold text-xs text-terracotta hover:opacity-80 flex items-center gap-1 active:scale-98 transition-all"
+            >
+              <CheckCircle2 className="w-4 h-4" /> Mark bake complete
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+// ---------------------------------------------------------------------------
+
 export const ActiveBakesView: React.FC<ActiveBakesViewProps> = ({
   user,
   starters,
@@ -32,6 +476,7 @@ export const ActiveBakesView: React.FC<ActiveBakesViewProps> = ({
   onUpdateSession,
   onCreateSession,
   onCompleteSession,
+  onArchiveSession,
   onOpenAuth,
 }) => {
   const [isBuildingRecipe, setIsBuildingRecipe] = useState(false);
@@ -84,84 +529,6 @@ export const ActiveBakesView: React.FC<ActiveBakesViewProps> = ({
     );
   }
 
-  const handleStageChange = (session: BakeSession, newStage: BakeStage) => {
-    const timeStr = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
-    const updated: BakeSession = {
-      ...session,
-      currentStage: newStage,
-      timeline: [
-        ...session.timeline,
-        {
-          id: `tl-${Date.now()}`,
-          timestamp: Date.now(),
-          timeStr,
-          stageName: newStage.replace('_', ' '),
-          message: `Advanced to ${newStage.replace('_', ' ')} stage`,
-          type: 'start',
-        },
-      ],
-    };
-    onUpdateSession(updated);
-    playKitchenChime();
-  };
-
-  const handleAddExtraTime = (session: BakeSession, minutes: number) => {
-    const secsToAdd = minutes * 60;
-    const timeStr = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
-    const currentTimer = session.timers.autolyse;
-
-    const updated: BakeSession = {
-      ...session,
-      timers: {
-        ...session.timers,
-        autolyse: {
-          ...currentTimer,
-          durationSecs: currentTimer.durationSecs + secsToAdd,
-          remaining: (currentTimer.remaining || 0) + secsToAdd,
-          running: true,
-          done: false,
-          targetEndTime: Date.now() + ((currentTimer.remaining || 0) + secsToAdd) * 1000,
-        },
-      },
-      timeline: [
-        ...session.timeline,
-        {
-          id: `tl-${Date.now()}`,
-          timestamp: Date.now(),
-          timeStr,
-          stageName: 'Autolyse',
-          message: `Autolyse extended (+${minutes}m)`,
-          type: 'extend',
-        },
-      ],
-    };
-    onUpdateSession(updated);
-    playKitchenChime();
-  };
-
-  const handleLogFold = (session: BakeSession) => {
-    const nextFolds = Math.min(session.totalFolds, session.foldsCompleted + 1);
-    const timeStr = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
-    playKitchenChime();
-
-    const updated: BakeSession = {
-      ...session,
-      foldsCompleted: nextFolds,
-      timeline: [
-        ...session.timeline,
-        {
-          id: `tl-${Date.now()}`,
-          timestamp: Date.now(),
-          timeStr,
-          stageName: 'Stretch & Folds',
-          message: `Stretch & fold ${nextFolds} of ${session.totalFolds} logged`,
-          type: 'complete',
-        },
-      ],
-    };
-    onUpdateSession(updated);
-  };
-
   return (
     <div className="space-y-5 max-w-lg mx-auto w-full pb-8 animate-fadeIn">
       {/* Top Action Header: New Loaf Button */}
@@ -177,208 +544,16 @@ export const ActiveBakesView: React.FC<ActiveBakesViewProps> = ({
         </button>
       </div>
 
-      {sessions.map((session) => {
-        const tempSuggestion = session.roomTemp ? getFermentationSuggestion(session.roomTemp) : null;
-        const stagesList: { id: BakeStage; label: string }[] = [
-          { id: 'autolyse', label: 'Autolyse' },
-          { id: 'stretch_folds', label: 'Folds' },
-          { id: 'bulk_ferment', label: 'Bulk Rise' },
-          { id: 'cold_retard', label: 'Cold Retard' },
-          { id: 'bake', label: 'Oven Bake' },
-        ];
-        const currentStageIndex = stagesList.findIndex((s) => s.id === session.currentStage);
-
-        return (
-          <div
-            key={session.id}
-            className="flex flex-col bg-card rounded-[20px] border border-border-card shadow-[0_8px_24px_rgba(51,48,42,0.06),inset_0_1px_0_rgba(255,255,255,1)] overflow-hidden"
-          >
-            {/* Header & Stage Progress Stepper */}
-            <div className="p-[17px] pb-3 bg-card border-b border-border-card">
-              {/* Stepper Dots */}
-              <div className="w-full flex items-center gap-1.5 mb-3">
-                {stagesList.map((st, i) => (
-                  <button
-                    key={st.id}
-                    onClick={() => handleStageChange(session, st.id)}
-                    className={`h-1.5 flex-1 rounded-full transition-all ${
-                      i <= currentStageIndex ? 'bg-terracotta' : 'bg-border-card'
-                    }`}
-                    title={st.label}
-                  />
-                ))}
-              </div>
-
-              <div className="flex justify-between items-start">
-                <div>
-                  <span className="font-serif italic text-xs uppercase tracking-[0.22em] text-muted block mb-0.5">
-                    {stagesList[currentStageIndex]?.label || 'Active Bake'}
-                  </span>
-                  <h2 className="font-serif text-[22px] font-semibold text-ink leading-tight">
-                    {session.title}
-                  </h2>
-                  <p className="font-sans text-xs text-muted mt-0.5">
-                    {session.loaves} loaf · {session.hydration}% hydration · {session.totalFlour}g flour
-                  </p>
-                </div>
-
-                <span className="bg-linen text-terracotta border border-terracotta/20 px-2.5 py-1 rounded-full font-sans text-[10px] uppercase font-bold tracking-wider">
-                  Stage {currentStageIndex + 1}/{stagesList.length}
-                </span>
-              </div>
-            </div>
-
-            {/* Stage Controls & Flexible Timer Prompt */}
-            <div className="p-[17px] space-y-5">
-              {/* Autolyse Completion Hand-off Prompt */}
-              {session.currentStage === 'autolyse' && (
-                <div className="bg-oat p-4 rounded-xl border border-border-field space-y-3">
-                  <h3 className="font-serif text-base font-semibold text-ink">
-                    Autolyse completed. Ready for the next stage?
-                  </h3>
-                  <div className="flex flex-col gap-2">
-                    <button
-                      onClick={() => handleAddExtraTime(session, 15)}
-                      className="w-full py-2.5 border-2 border-ink text-ink font-sans font-semibold text-xs uppercase tracking-wider rounded-[11px] hover:bg-linen active:scale-98 transition-all"
-                    >
-                      + Add 15m extra time
-                    </button>
-                    <button
-                      onClick={() => handleStageChange(session, 'stretch_folds')}
-                      className="w-full py-2.5 bg-ink text-onDark font-sans font-semibold text-xs uppercase tracking-wider rounded-[11px] flex items-center justify-center gap-2 shadow-btnInk active:scale-98 transition-all"
-                    >
-                      <span>Advance to Stretch & Folds</span>
-                      <ArrowRight className="w-4 h-4" />
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {/* Stretch & Folds Progress */}
-              <div className="space-y-2">
-                <div className="flex justify-between items-center">
-                  <h3 className="font-sans text-[11px] uppercase font-bold text-muted tracking-wider">
-                    Stretch & Folds
-                  </h3>
-                  <span className="font-mono text-xs font-bold text-terracotta">
-                    {session.foldsCompleted} / {session.totalFolds}
-                  </span>
-                </div>
-
-                {/* Progress Dots */}
-                <div className="flex gap-2">
-                  {Array.from({ length: session.totalFolds }).map((_, idx) => (
-                    <div
-                      key={idx}
-                      className={`h-2 flex-1 rounded-full transition-all ${
-                        idx < session.foldsCompleted
-                          ? 'bg-terracotta shadow-sm'
-                          : 'bg-border-field border border-border-card'
-                      }`}
-                    />
-                  ))}
-                </div>
-
-                {session.foldsCompleted < session.totalFolds && (
-                  <button
-                    onClick={() => handleLogFold(session)}
-                    className="w-full mt-2 py-2 bg-oat hover:bg-linen border border-border-field rounded-[11px] text-xs font-sans font-semibold text-ink flex items-center justify-center gap-1.5 transition-all"
-                  >
-                    <CheckCircle2 className="w-4 h-4 text-terracotta" />
-                    Log Fold #{session.foldsCompleted + 1}
-                  </button>
-                )}
-              </div>
-
-              {/* Bulk Fermentation Engine with Temp Estimation */}
-              <div className="bg-linen p-3.5 rounded-xl border border-border-card flex items-center gap-4">
-                {/* Circular Progress Indicator */}
-                <div className="relative w-14 h-14 flex items-center justify-center flex-shrink-0">
-                  <svg className="w-full h-full transform -rotate-90" viewBox="0 0 36 36">
-                    <circle
-                      className="text-border-field"
-                      strokeWidth="3.5"
-                      stroke="currentColor"
-                      fill="transparent"
-                      r="16"
-                      cx="18"
-                      cy="18"
-                    />
-                    <circle
-                      className="text-terracotta"
-                      strokeWidth="3.5"
-                      strokeDasharray="100"
-                      strokeDashoffset="45"
-                      strokeLinecap="round"
-                      stroke="currentColor"
-                      fill="transparent"
-                      r="16"
-                      cx="18"
-                      cy="18"
-                    />
-                  </svg>
-                  <span className="absolute font-mono text-[11px] font-bold text-ink">55%</span>
-                </div>
-
-                <div className="flex-1">
-                  <div className="flex items-center gap-1">
-                    <Thermometer className="w-3.5 h-3.5 text-terracotta" />
-                    <h4 className="font-serif text-sm font-semibold text-ink">
-                      Bulk Fermentation
-                    </h4>
-                  </div>
-                  <p className="font-sans text-xs text-muted mt-0.5">
-                    Est. finish at {tempSuggestion ? `~${tempSuggestion.hrs}h (${tempSuggestion.rise}% rise)` : '4:30 PM'}
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            {/* Live Kitchen Activity Timeline (Bottom of Card) */}
-            <div className="p-[17px] pt-4 border-t border-border-card bg-card/60">
-              <h4 className="font-sans text-[10px] text-faint uppercase font-bold tracking-wider mb-3 flex items-center gap-1.5">
-                <Clock className="w-3.5 h-3.5 text-muted" /> Activity Timeline
-              </h4>
-
-              <div className="flex flex-col gap-3 relative ml-2">
-                <div className="absolute left-0 top-2 bottom-2 w-px border-l border-dashed border-border-leader" />
-
-                {session.timeline.map((item) => (
-                  <div key={item.id} className="relative pl-5 flex flex-col">
-                    <div className="absolute left-[-4px] top-1.5 w-2 h-2 rounded-full bg-terracotta ring-2 ring-card" />
-                    <span className="font-mono text-[11px] font-bold text-olive">
-                      {item.timeStr}
-                    </span>
-                    <span className="font-sans text-[12px] text-muted">
-                      {item.message}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Footer Actions: Complete or View Recipe */}
-            <div className="bg-oat border-t border-border-card px-4 py-3 flex justify-between items-center">
-              <button
-                onClick={() => {
-                  onCompleteSession(session.id);
-                  playKitchenChime();
-                }}
-                className="font-sans font-semibold text-xs text-terracotta hover:opacity-80 flex items-center gap-1"
-              >
-                <CheckCircle2 className="w-4 h-4" /> Mark Bake Complete
-              </button>
-
-              <button
-                onClick={() => setActiveRecipeModal(session)}
-                className="font-sans font-semibold text-xs text-ink hover:text-terracotta flex items-center gap-1"
-              >
-                View Full Recipe <ChevronRight className="w-4 h-4" />
-              </button>
-            </div>
-          </div>
-        );
-      })}
+      {sessions.map((session) => (
+        <BakeCard
+          key={session.id}
+          session={session}
+          onUpdateSession={onUpdateSession}
+          onCompleteSession={onCompleteSession}
+          onArchiveSession={onArchiveSession}
+          onViewRecipe={setActiveRecipeModal}
+        />
+      ))}
 
       {/* Recipe Modal Preview */}
       {activeRecipeModal && (

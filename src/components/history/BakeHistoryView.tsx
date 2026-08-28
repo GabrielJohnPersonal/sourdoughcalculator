@@ -40,6 +40,35 @@ export const BakeHistoryView: React.FC<BakeHistoryViewProps> = ({
   const [editRating, setEditRating] = useState<number>(5);
   const [editNotes, setEditNotes] = useState<string>('');
 
+  // Multi-factor search & sort.
+  // NOTE: this hook MUST stay above the guest early-return below. Hooks have to run
+  // in the same order on every render; when a guest signs in from inside History the
+  // component re-renders with `user` populated, and if this useMemo sat after the
+  // early-return it would be hook #7 on a render that previously ran 6 — React #310,
+  // white screen. Keeping it here makes the hook count identical for guests and members.
+  const filteredHistory = useMemo(() => {
+    const q = searchTerm.toLowerCase().trim();
+    let list = history.filter((b) => {
+      if (!q) return true;
+      const titleMatch = b.title.toLowerCase().includes(q);
+      const dateMatch = b.date.toLowerCase().includes(q);
+      const starterMatch = b.starterName ? b.starterName.toLowerCase().includes(q) : false;
+      const flourMatch = b.flourBlend?.some((f) => f.name.toLowerCase().includes(q)) ?? false;
+      const notesMatch = b.tastingNotes ? b.tastingNotes.toLowerCase().includes(q) : false;
+      return titleMatch || dateMatch || starterMatch || flourMatch || notesMatch;
+    });
+
+    list = [...list].sort((a, b) => {
+      if (sortBy === 'hydration_desc') return b.hydration - a.hydration;
+      if (sortBy === 'rating_desc') return (b.crumbRating || 0) - (a.crumbRating || 0);
+      if (sortBy === 'flour_desc') return b.totalFlour - a.totalFlour;
+      if (sortBy === 'date_asc') return a.id - b.id;
+      return b.id - a.id; // date_desc default
+    });
+
+    return list;
+  }, [history, searchTerm, sortBy]);
+
   // If unauthenticated guest, show the attractive Gated Lock Screen
   if (!user) {
     return (
@@ -83,30 +112,6 @@ export const BakeHistoryView: React.FC<BakeHistoryViewProps> = ({
       </div>
     );
   }
-
-  // Multi-factor search & sort
-  const filteredHistory = useMemo(() => {
-    const q = searchTerm.toLowerCase().trim();
-    let list = history.filter((b) => {
-      if (!q) return true;
-      const titleMatch = b.title.toLowerCase().includes(q);
-      const dateMatch = b.date.toLowerCase().includes(q);
-      const starterMatch = b.starterName ? b.starterName.toLowerCase().includes(q) : false;
-      const flourMatch = b.flourBlend?.some((f) => f.name.toLowerCase().includes(q)) ?? false;
-      const notesMatch = b.tastingNotes ? b.tastingNotes.toLowerCase().includes(q) : false;
-      return titleMatch || dateMatch || starterMatch || flourMatch || notesMatch;
-    });
-
-    list = [...list].sort((a, b) => {
-      if (sortBy === 'hydration_desc') return b.hydration - a.hydration;
-      if (sortBy === 'rating_desc') return (b.crumbRating || 0) - (a.crumbRating || 0);
-      if (sortBy === 'flour_desc') return b.totalFlour - a.totalFlour;
-      if (sortBy === 'date_asc') return a.id - b.id;
-      return b.id - a.id; // date_desc default
-    });
-
-    return list;
-  }, [history, searchTerm, sortBy]);
 
   const handleOpenJournal = (bake: BakeSession) => {
     setSelectedBakeForJournal(bake);

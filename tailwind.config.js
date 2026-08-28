@@ -14,6 +14,9 @@ export default {
         disabled: '#b0a48c',
         onDark: '#fbf2e9',
         terracotta: '#b45c3f',
+        // Pressed/hover shade of terracotta — used by `hover:bg-primary` on every
+        // accent button. ~13% darker than terracotta, same hue, still the one accent.
+        primary: '#994e36',
         olive: '#6f7048',
         warning: '#c98a3c',
         danger: '#a2472c',
@@ -21,6 +24,11 @@ export default {
         'border-field': '#e2d6bf',
         'border-leader': '#cdbfa2',
         surface: '#fff9ef',
+      },
+      scale: {
+        // `active:scale-98` is used for the press animation on ~15 buttons app-wide
+        // but isn't a default Tailwind step, so it was silently generating nothing.
+        98: '0.98',
       },
       fontFamily: {
         serif: ['Spectral', 'Georgia', 'serif'],

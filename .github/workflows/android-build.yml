@@ -47,11 +47,14 @@ jobs:
 
       - name: Sign & Align APK for Android 12/13/14/15
         run: |
+          # Locate build-tools
           BUILD_TOOLS_PATH=$(find /usr/local/lib/android/sdk/build-tools/ -maxdepth 1 -mindepth 1 | sort -V | tail -n 1)
           echo "Using Android Build Tools at $BUILD_TOOLS_PATH"
           
+          # Generate signing keystore
           keytool -genkey -v -keystore release.keystore -alias sourdough -keyalg RSA -keysize 2048 -validity 10000 -storepass sourdough123 -keypass sourdough123 -dname "CN=SourdoughCalculator, OU=App, O=Bakery, L=Kitchen, ST=App, C=US"
           
+          # Align and Sign with v2/v3 scheme
           $BUILD_TOOLS_PATH/zipalign -v -p 4 android/app/build/outputs/apk/debug/app-debug.apk Sourdough-Calculator.apk
           $BUILD_TOOLS_PATH/apksigner sign --ks release.keystore --ks-pass pass:sourdough123 --ks-key-alias sourdough --key-pass pass:sourdough123 --v1-signing-enabled true --v2-signing-enabled true --v3-signing-enabled true Sourdough-Calculator.apk
           $BUILD_TOOLS_PATH/apksigner verify Sourdough-Calculator.apk

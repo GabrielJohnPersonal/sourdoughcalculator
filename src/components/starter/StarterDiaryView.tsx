@@ -8,6 +8,7 @@ import {
   ShieldCheck,
   History,
   ChevronRight,
+  Trash2,
 } from 'lucide-react';
 import { StarterProfile, UserProfile, StarterFeedEntry } from '../../types';
 import { getRelativeTime } from '../../utils/formatters';
@@ -16,6 +17,7 @@ interface StarterDiaryViewProps {
   user: UserProfile | null;
   starters: StarterProfile[];
   onAddStarter: (starter: StarterProfile) => void;
+  onDeleteStarter: (starterId: string) => void;
   onLogFeed: (starterId: string, entry: StarterFeedEntry) => void;
   onOpenAuth: () => void;
 }
@@ -24,6 +26,7 @@ export const StarterDiaryView: React.FC<StarterDiaryViewProps> = ({
   user,
   starters,
   onAddStarter,
+  onDeleteStarter,
   onLogFeed,
   onOpenAuth,
 }) => {
@@ -32,6 +35,8 @@ export const StarterDiaryView: React.FC<StarterDiaryViewProps> = ({
   const [isAddStarterOpen, setIsAddStarterOpen] = useState(false);
   const [newStarterName, setNewStarterName] = useState('');
   const [newStarterFlour, setNewStarterFlour] = useState('100% Rye');
+  const [newStarterHydration, setNewStarterHydration] = useState(100);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   // Feed Modal State & Dual Mode
   const [feedMode, setFeedMode] = useState<'ratio' | 'manual'>('ratio');
@@ -46,20 +51,20 @@ export const StarterDiaryView: React.FC<StarterDiaryViewProps> = ({
   const [feedFlourType, setFeedFlourType] = useState('Dark Rye');
   const [feedNotes, setFeedNotes] = useState('');
 
-  // Handle ratio preset change
+  // The starter being fed drives the flour:water split. Falls back to 100%.
+  const feedStarterHydration = selectedStarterForFeed?.hydration ?? 100;
+
+  // Ratio presets are now seed:flour only — water follows the starter's hydration,
+  // so a 60% starter is fed a 60% flour/water split instead of a forced 50/50.
   const handleRatioPresetChange = (preset: string) => {
     setSelectedRatioPreset(preset);
-    const parts = preset.split(':').map(Number);
-    if (parts.length === 3) {
-      const [rS, rF, rW] = parts;
+    const [rS, rF] = preset.split(':').map(Number);
+    if (rF > 0) {
       setRatioSeed(rS);
       setRatioFlour(rF);
-      setRatioWater(rW);
-      // Auto recalculate based on current flour
-      const calculatedSeed = Math.round(flourGrams * (rS / rF));
-      const calculatedWater = Math.round(flourGrams * (rW / rF));
-      setSeedGrams(calculatedSeed);
-      setWaterGrams(calculatedWater);
+      setRatioWater(rF); // kept in sync for the live ratio string
+      setSeedGrams(Math.round(flourGrams * (rS / rF)));
+      setWaterGrams(Math.round(flourGrams * (feedStarterHydration / 100)));
     }
   };
 
@@ -67,10 +72,8 @@ export const StarterDiaryView: React.FC<StarterDiaryViewProps> = ({
   const handleFlourChangeInRatioMode = (newFlour: number) => {
     setFlourGrams(newFlour);
     if (feedMode === 'ratio' && ratioFlour > 0) {
-      const calculatedSeed = Math.round(newFlour * (ratioSeed / ratioFlour));
-      const calculatedWater = Math.round(newFlour * (ratioWater / ratioFlour));
-      setSeedGrams(calculatedSeed);
-      setWaterGrams(calculatedWater);
+      setSeedGrams(Math.round(newFlour * (ratioSeed / ratioFlour)));
+      setWaterGrams(Math.round(newFlour * (feedStarterHydration / 100)));
     }
   };
 
@@ -121,19 +124,30 @@ export const StarterDiaryView: React.FC<StarterDiaryViewProps> = ({
   const handleOpenFeedModal = (starter: StarterProfile) => {
     setSelectedStarterForFeed(starter);
     setFeedFlourType(starter.flourType || 'Dark Rye');
-    handleRatioPresetChange('1:2:2');
+    // Seed the calculator from this starter's own hydration, not a forced 1:2:2.
+    const flour = 50;
+    setFeedMode('ratio');
+    setSelectedRatioPreset('1:2');
+    setRatioSeed(1);
+    setRatioFlour(2);
+    setRatioWater(2);
+    setFlourGrams(flour);
+    setSeedGrams(Math.round(flour * 0.5));
+    setWaterGrams(Math.round(flour * (starter.hydration / 100)));
+    setFeedNotes('');
   };
 
   const handleSaveFeed = (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedStarterForFeed) return;
 
-    // Calculate ratio string
+    // Ratio string is always derived from the actual grams, so a stiff-starter
+    // feed records e.g. 1:2:1 rather than the preset's nominal 1:2:2.
     const minPart = Math.min(seedGrams, flourGrams, waterGrams) || 1;
     const rSeed = Math.round(seedGrams / minPart);
     const rFlour = Math.round(flourGrams / minPart);
     const rWater = Math.round(waterGrams / minPart);
-    const ratioStr = feedMode === 'ratio' ? selectedRatioPreset : `${rSeed}:${rFlour}:${rWater}`;
+    const ratioStr = `${rSeed}:${rFlour}:${rWater}`;
 
     const newEntry: StarterFeedEntry = {
       id: `feed-${Date.now()}`,
@@ -170,15 +184,19 @@ export const StarterDiaryView: React.FC<StarterDiaryViewProps> = ({
     e.preventDefault();
     if (!newStarterName.trim()) return;
 
+    const hyd = Math.max(1, newStarterHydration || 100);
+    const initFlour = 40;
+    const initWater = Math.round(initFlour * (hyd / 100));
+
     const newProfile: StarterProfile = {
       id: `starter-${Date.now()}`,
       name: newStarterName.trim(),
       flourType: newStarterFlour,
-      hydration: 100,
+      hydration: hyd,
       dateCreated: new Date().toISOString().split('T')[0],
       status: 'active_peak',
       lastFedTimestamp: Date.now(),
-      lastRatio: '1:2:2',
+      lastRatio: `1:2:${Math.max(1, Math.round(2 * (hyd / 100)))}`,
       peakTargetTimestamp: Date.now() + 4.5 * 3600 * 1000,
       feedHistory: [
         {
@@ -187,10 +205,10 @@ export const StarterDiaryView: React.FC<StarterDiaryViewProps> = ({
           dateStr: 'Today',
           timeStr: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
           seedGrams: 20,
-          flourGrams: 40,
+          flourGrams: initFlour,
           flourType: newStarterFlour,
-          waterGrams: 40,
-          ratio: '1:2:2',
+          waterGrams: initWater,
+          ratio: `1:2:${Math.max(1, Math.round(2 * (hyd / 100)))}`,
           notes: 'Starter initialized.',
         },
       ],
@@ -199,6 +217,7 @@ export const StarterDiaryView: React.FC<StarterDiaryViewProps> = ({
     onAddStarter(newProfile);
     setIsAddStarterOpen(false);
     setNewStarterName('');
+    setNewStarterHydration(100);
   };
 
   const totalFeedBuild = seedGrams + flourGrams + waterGrams;
@@ -236,40 +255,59 @@ export const StarterDiaryView: React.FC<StarterDiaryViewProps> = ({
           const isPeak = starter.status === 'active_peak';
           const relativeFed = starter.lastFedTimestamp ? getRelativeTime(starter.lastFedTimestamp) : 'Never';
 
+          // Honest readiness: elapsed since last feed vs. the projected time to peak.
+          const feedProgress = (() => {
+            const fed = starter.lastFedTimestamp;
+            const peak = starter.peakTargetTimestamp;
+            if (!fed) return null;
+            if (!peak || peak <= fed) return 1;
+            return Math.min(1, Math.max(0, (Date.now() - fed) / (peak - fed)));
+          })();
+          const pastPeak = feedProgress !== null && feedProgress >= 1;
+          const isConfirmingDelete = confirmDeleteId === starter.id;
+
           return (
             <div
               key={starter.id}
               onClick={() => setSelectedStarterForHistory(starter)}
-              className="bg-card rounded-[20px] p-[17px] shadow-[0_2px_12px_rgba(51,48,42,0.06),inset_0_1px_0_rgba(255,255,255,0.8)] border border-border-card relative overflow-hidden flex flex-col gap-4 cursor-pointer hover:border-terracotta/40 transition-all active:scale-[0.99] group"
+              className="bg-card rounded-[20px] p-[17px] shadow-[0_2px_12px_rgba(51,48,42,0.06),inset_0_1px_0_rgba(255,255,255,0.8)] border border-border-card relative overflow-hidden flex flex-col gap-3.5 cursor-pointer hover:border-terracotta/40 transition-all active:scale-[0.99] group"
             >
-              <div className="flex justify-between items-start">
-                <div>
+              {/* Name + Feed (top-right) + delete */}
+              <div className="flex justify-between items-start gap-3">
+                <div className="min-w-0">
                   <div className="flex items-center gap-2">
-                    <h3 className="font-serif text-[22px] font-semibold text-ink group-hover:text-terracotta transition-colors">
+                    <h3 className="font-serif text-[22px] font-semibold text-ink group-hover:text-terracotta transition-colors truncate">
                       {starter.name}
                     </h3>
-                    <ChevronRight className="w-4 h-4 text-faint group-hover:text-terracotta transition-colors" />
+                    <ChevronRight className="w-4 h-4 text-faint group-hover:text-terracotta transition-colors flex-shrink-0" />
                   </div>
                   <p className="font-sans text-xs text-muted mt-0.5">
                     {starter.hydration}% Hydration • {starter.flourType}
                   </p>
                 </div>
 
-                <div
-                  className={`px-3 py-1 rounded-full flex items-center gap-1.5 border ${
-                    isPeak
-                      ? 'bg-terracotta/10 text-terracotta border-terracotta/20'
-                      : 'bg-warning/10 text-warning border-warning/20'
-                  }`}
-                >
-                  {isPeak ? (
-                    <Flame className="w-3.5 h-3.5" />
-                  ) : (
-                    <Utensils className="w-3.5 h-3.5" />
-                  )}
-                  <span className="font-sans text-[10px] uppercase font-bold tracking-wider">
-                    {isPeak ? 'Active & Peak' : 'Hungry'}
-                  </span>
+                <div className="flex items-center gap-1.5 flex-shrink-0">
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleOpenFeedModal(starter);
+                    }}
+                    className="bg-ink text-onDark shadow-btnInk rounded-[11px] pl-2.5 pr-3 py-1.5 flex items-center gap-1 font-sans text-xs font-bold active:scale-95 hover:opacity-90 transition-all"
+                  >
+                    <Plus className="w-3.5 h-3.5" /> Feed
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setConfirmDeleteId(starter.id);
+                    }}
+                    className="text-disabled hover:text-danger p-1 transition-colors"
+                    title="Delete starter"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
                 </div>
               </div>
 
@@ -281,48 +319,80 @@ export const StarterDiaryView: React.FC<StarterDiaryViewProps> = ({
                   </span>
                   <span className="font-sans text-sm font-bold text-ink">{relativeFed}</span>
                 </div>
-                <div className="flex flex-col">
+                <div className="flex flex-col items-end">
                   <span className="font-sans text-[10px] text-faint uppercase font-bold tracking-wider mb-0.5">
-                    Ratio
+                    Last Ratio
                   </span>
                   <span className="font-mono text-sm font-bold text-ink">
                     {starter.lastRatio || '1:2:2'}
                   </span>
                 </div>
-                <div className="flex flex-col">
-                  <span className="font-sans text-[10px] text-faint uppercase font-bold tracking-wider mb-0.5">
-                    Status
-                  </span>
-                  <span
-                    className={`font-sans text-sm font-bold ${
-                      isPeak ? 'text-olive' : 'text-danger'
-                    }`}
-                  >
-                    {isPeak ? 'Ready' : 'Feed Due'}
-                  </span>
-                </div>
               </div>
 
-              {/* Progress Bar & Feed Action */}
-              <div className="flex items-center gap-3">
-                <div className="flex-1 bg-oat border border-border-field rounded-full h-2 overflow-hidden">
-                  <div
-                    className={`h-full rounded-full transition-all ${
-                      isPeak ? 'bg-terracotta w-[85%]' : 'bg-warning w-[25%]'
-                    }`}
-                  />
-                </div>
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleOpenFeedModal(starter);
-                  }}
-                  className="px-3 py-1 bg-oat hover:bg-linen border border-border-field rounded-lg font-sans text-xs font-semibold text-ink active:scale-95 transition-all"
+              {/* Bottom bar: honest readiness + status pill (moved down from top-right) */}
+              {isConfirmingDelete ? (
+                <div
+                  className="flex items-center justify-between gap-2 bg-danger/5 border border-danger/20 rounded-xl px-3 py-2"
+                  onClick={(e) => e.stopPropagation()}
                 >
-                  Feed
-                </button>
-              </div>
+                  <span className="font-sans text-xs text-ink font-semibold truncate">
+                    Delete {starter.name}?
+                  </span>
+                  <div className="flex gap-2 flex-shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => setConfirmDeleteId(null)}
+                      className="font-sans text-xs text-muted hover:text-ink px-2 py-1"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onDeleteStarter(starter.id);
+                        setConfirmDeleteId(null);
+                      }}
+                      className="font-sans text-xs font-semibold text-white bg-danger hover:opacity-90 rounded-lg px-3 py-1 active:scale-98 transition-all"
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex items-center gap-3">
+                  <div className="flex-1 min-w-0">
+                    <div className="bg-oat border border-border-field rounded-full h-2 overflow-hidden">
+                      <div
+                        className={`h-full rounded-full transition-all ${pastPeak ? 'bg-warning' : 'bg-terracotta'}`}
+                        style={{ width: `${(feedProgress ?? 0) * 100}%` }}
+                      />
+                    </div>
+                    <span className="font-sans text-[10px] text-faint mt-1 block">
+                      {feedProgress === null
+                        ? 'Not fed yet'
+                        : pastPeak
+                        ? 'Past peak — feed soon'
+                        : `${Math.round(feedProgress * 100)}% to peak`}
+                    </span>
+                  </div>
+                  <div
+                    className={`px-2.5 py-1 rounded-full flex items-center gap-1.5 border flex-shrink-0 ${
+                      isPeak
+                        ? 'bg-terracotta/10 text-terracotta border-terracotta/20'
+                        : 'bg-warning/10 text-warning border-warning/20'
+                    }`}
+                  >
+                    {isPeak ? (
+                      <Flame className="w-3.5 h-3.5" />
+                    ) : (
+                      <Utensils className="w-3.5 h-3.5" />
+                    )}
+                    <span className="font-sans text-[10px] uppercase font-bold tracking-wider">
+                      {isPeak ? 'Active & Peak' : 'Hungry'}
+                    </span>
+                  </div>
+                </div>
+              )}
             </div>
           );
         })}
@@ -470,14 +540,14 @@ export const StarterDiaryView: React.FC<StarterDiaryViewProps> = ({
             </div>
 
             <form onSubmit={handleSaveFeed} className="space-y-3.5">
-              {/* Ratio Mode Presets */}
+              {/* Ratio Mode Presets — seed:flour; water tracks the starter's hydration */}
               {feedMode === 'ratio' && (
                 <div className="space-y-2">
                   <label className="text-[10px] text-faint uppercase font-bold font-sans block">
-                    Select Target Ratio (Seed : Flour : Water)
+                    Seed : Flour — water follows {feedStarterHydration}% hydration
                   </label>
                   <div className="grid grid-cols-4 gap-1.5">
-                    {['1:1:1', '1:2:2', '1:3:3', '1:4:4'].map((preset) => (
+                    {['1:1', '1:2', '1:3', '1:4'].map((preset) => (
                       <button
                         key={preset}
                         type="button"
@@ -624,6 +694,24 @@ export const StarterDiaryView: React.FC<StarterDiaryViewProps> = ({
                   className="w-full bg-oat border border-border-field rounded-[11px] p-2.5 text-xs font-sans text-ink focus:outline-none"
                   required
                 />
+              </div>
+
+              <div>
+                <label className="text-[10px] text-faint uppercase font-bold font-sans">Hydration</label>
+                <div className="relative">
+                  <input
+                    type="number"
+                    min="1"
+                    value={newStarterHydration}
+                    onChange={(e) => setNewStarterHydration(Math.max(0, Number(e.target.value) || 0))}
+                    className="w-full bg-oat border border-border-field rounded-[11px] p-2.5 pr-8 text-xs font-mono font-bold text-ink focus:outline-none"
+                    required
+                  />
+                  <span className="absolute right-3 top-1/2 -translate-y-1/2 font-sans text-xs text-muted">%</span>
+                </div>
+                <p className="font-serif italic text-[11px] text-muted mt-1">
+                  100 = equal flour &amp; water. Lower for a stiff starter (e.g. 60).
+                </p>
               </div>
 
               <button

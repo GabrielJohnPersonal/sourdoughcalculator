@@ -1,18 +1,22 @@
 import React, { useState } from 'react';
 import { AppTab, BakeSession, StarterProfile, UserProfile, StarterFeedEntry } from './types';
 import { useLocalStorage } from './hooks/useLocalStorage';
-import { useWakeLock } from './hooks/useWakeLock';
 import { Header } from './components/layout/Header';
 import { BottomNav } from './components/layout/BottomNav';
 import { WelcomeModal } from './components/layout/WelcomeModal';
 import { ActiveBakesView } from './components/active/ActiveBakesView';
 import { BakeHistoryView } from './components/history/BakeHistoryView';
 import { StarterDiaryView } from './components/starter/StarterDiaryView';
+import { INITIAL_STARTERS } from './data/initialData';
 import {
-  INITIAL_STARTERS,
-  INITIAL_HISTORY,
-  INITIAL_ACTIVE_BAKE,
-} from './data/initialData';
+  runBakeMigrations,
+  ACTIVE_BAKES_KEY,
+  BAKE_HISTORY_KEY,
+} from './utils/bakeMigration';
+
+// One-time v1 → v2 bake-data migration. Runs before the useLocalStorage
+// initializers below read from storage, and is a no-op once migrated.
+runBakeMigrations();
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<AppTab>('active');
@@ -35,13 +39,13 @@ export default function App() {
   );
 
   const [activeBakes, setActiveBakes] = useLocalStorage<BakeSession[]>(
-    'sourdough_active_bakes',
-    [INITIAL_ACTIVE_BAKE]
+    ACTIVE_BAKES_KEY,
+    []
   );
 
   const [bakeHistory, setBakeHistory] = useLocalStorage<BakeSession[]>(
-    'sourdough_bake_history',
-    INITIAL_HISTORY
+    BAKE_HISTORY_KEY,
+    []
   );
 
   // 3 Tab Titles
@@ -105,27 +109,21 @@ export default function App() {
   };
 
   const handleCloneBake = (session: BakeSession) => {
+    const now = Date.now();
+    const timeStr = new Date(now).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
     const clonedSession: BakeSession = {
       ...session,
-      id: Date.now(),
+      id: now,
       date: 'Today',
-      time: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
+      time: timeStr,
       status: 'active',
-      currentStage: 'autolyse',
-      foldsCompleted: 0,
-      timers: {
-        autolyse: { targetEndTime: Date.now() + 1800 * 1000, durationSecs: 1800, remaining: 1800, running: true, done: false },
-        foldInterval: { targetEndTime: null, durationSecs: 1800, remaining: 1800, running: false, done: false },
-        bulkFerment: { targetEndTime: null, durationSecs: 28800, remaining: 28800, running: false, done: false },
-        coldRetard: { targetEndTime: null, durationSecs: 43200, remaining: null, running: false, done: false },
-        bakeLidOn: { targetEndTime: null, durationSecs: 1200, remaining: null, running: false, done: false },
-        bakeLidOff: { targetEndTime: null, durationSecs: 1200, remaining: null, running: false, done: false },
-      },
+      startedAt: now,
+      steps: [],
       timeline: [
         {
-          id: `tl-${Date.now()}`,
-          timestamp: Date.now(),
-          timeStr: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
+          id: `tl-${now}`,
+          timestamp: now,
+          timeStr,
           stageName: 'Setup',
           message: `Cloned formula from ${session.title} (${session.hydration}% hydration)`,
           type: 'start',
@@ -147,6 +145,10 @@ export default function App() {
 
   const handleAddStarter = (newStarter: StarterProfile) => {
     setStarters((prev) => [newStarter, ...prev]);
+  };
+
+  const handleDeleteStarter = (starterId: string) => {
+    setStarters((prev) => prev.filter((s) => s.id !== starterId));
   };
 
   const handleLogFeed = (starterId: string, entry: StarterFeedEntry) => {
@@ -204,6 +206,7 @@ export default function App() {
             user={user}
             starters={starters}
             onAddStarter={handleAddStarter}
+            onDeleteStarter={handleDeleteStarter}
             onLogFeed={handleLogFeed}
             onOpenAuth={() => setIsWelcomeModalOpen(true)}
           />

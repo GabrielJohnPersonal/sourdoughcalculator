@@ -7,8 +7,12 @@ import {
   Droplets,
   Sparkles,
   ChevronDown,
+  Thermometer,
 } from 'lucide-react';
 import { FlourBlendItem, StarterProfile, UserProfile, BakeSession } from '../../types';
+import { TEMP_GUIDE } from '../../utils/fermentationEngine';
+
+const TEMP_OPTIONS = [...TEMP_GUIDE].sort((a, b) => a.c - b.c);
 
 interface NewBakeViewProps {
   user: UserProfile | null;
@@ -24,16 +28,23 @@ export const NewBakeView: React.FC<NewBakeViewProps> = ({
   onOpenAuth,
 }) => {
   // ================= SECTION 1: TARGET BANNETON SIZE =================
+  const [bakeName, setBakeName] = useState<string>('');
   const [loafSizePreset, setLoafSizePreset] = useState<'small' | 'medium' | 'large' | 'custom'>('large');
   const [totalFlour, setTotalFlour] = useState<number>(500);
   const [loaves, setLoaves] = useState<number>(1);
   const [hydration, setHydration] = useState<number>(75);
   const [saltPct, setSaltPct] = useState<number>(2.0);
+  const [roomTempC, setRoomTempC] = useState<number>(23);
 
   // ================= SECTION 2: STARTER INPUT =================
-  const [starterInputMode, setStarterInputMode] = useState<'diary' | 'grams' | 'manual'>('diary');
+  // Guests can't reach the diary, so don't default them into a mode that
+  // silently pulls a saved starter with no visible control.
+  const [starterInputMode, setStarterInputMode] = useState<'diary' | 'grams' | 'manual'>(
+    user ? 'diary' : 'grams',
+  );
   const [selectedStarterId, setSelectedStarterId] = useState<string>(starters[0]?.id || 'starter-1');
   const [starterTotalGrams, setStarterTotalGrams] = useState<number>(100);
+  const [gramsHydration, setGramsHydration] = useState<number>(100);
   const [manualStarterFlour, setManualStarterFlour] = useState<number>(50);
   const [manualStarterWater, setManualStarterWater] = useState<number>(50);
 
@@ -53,19 +64,26 @@ export const NewBakeView: React.FC<NewBakeViewProps> = ({
     return starters.find((s) => s.id === selectedStarterId) || starters[0];
   }, [starters, selectedStarterId]);
 
+  // "From Diary" only counts when there's actually a signed-in user behind it.
+  const useDiaryStarter = starterInputMode === 'diary' && !!user;
+
+  const suggestedName =
+    useDiaryStarter && selectedStarter ? `${selectedStarter.name} Loaf` : 'Country Sourdough';
+
   // ================= CALCULATION ENGINE =================
   let computedStarterFlour = 0;
   let computedStarterWater = 0;
   let computedTotalStarter = 0;
 
-  if (starterInputMode === 'diary') {
+  if (useDiaryStarter) {
     const hyd = selectedStarter ? selectedStarter.hydration : 100;
     computedTotalStarter = starterTotalGrams * loaves;
     computedStarterFlour = Math.round(computedTotalStarter / (1 + hyd / 100));
     computedStarterWater = computedTotalStarter - computedStarterFlour;
   } else if (starterInputMode === 'grams') {
+    // Total-weight mode: split by the entered starter hydration, not a fixed 50/50.
     computedTotalStarter = starterTotalGrams * loaves;
-    computedStarterFlour = Math.round(computedTotalStarter / 2);
+    computedStarterFlour = Math.round(computedTotalStarter / (1 + gramsHydration / 100));
     computedStarterWater = computedTotalStarter - computedStarterFlour;
   } else if (starterInputMode === 'manual') {
     computedStarterFlour = manualStarterFlour * loaves;
@@ -132,15 +150,17 @@ export const NewBakeView: React.FC<NewBakeViewProps> = ({
   };
 
   const handleCreateSession = () => {
+    const now = Date.now();
+    const timeStr = new Date(now).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
     const newSession: BakeSession = {
-      id: Date.now(),
+      id: now,
       date: 'Today',
-      time: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
-      title: starterInputMode === 'diary' && selectedStarter ? `${selectedStarter.name} Loaf` : 'Country Sourdough',
+      time: timeStr,
+      title: bakeName.trim() || suggestedName,
       status: 'active',
-      currentStage: 'autolyse',
-      starterId: starterInputMode === 'diary' ? selectedStarter?.id : undefined,
-      starterName: starterInputMode === 'diary' ? selectedStarter?.name : undefined,
+      startedAt: now,
+      starterId: useDiaryStarter ? selectedStarter?.id : undefined,
+      starterName: useDiaryStarter ? selectedStarter?.name : undefined,
       totalFlour,
       hydration,
       saltPct,
@@ -149,22 +169,13 @@ export const NewBakeView: React.FC<NewBakeViewProps> = ({
       starterWater: computedStarterWater,
       loaves,
       flourBlend,
-      roomTemp: 23,
-      foldsCompleted: 0,
-      totalFolds: 4,
-      timers: {
-        autolyse: { targetEndTime: Date.now() + 1800 * 1000, durationSecs: 1800, remaining: 1800, running: true, done: false },
-        foldInterval: { targetEndTime: null, durationSecs: 1800, remaining: 1800, running: false, done: false },
-        bulkFerment: { targetEndTime: null, durationSecs: 28800, remaining: 28800, running: false, done: false },
-        coldRetard: { targetEndTime: null, durationSecs: 43200, remaining: null, running: false, done: false },
-        bakeLidOn: { targetEndTime: null, durationSecs: 1200, remaining: null, running: false, done: false },
-        bakeLidOff: { targetEndTime: null, durationSecs: 1200, remaining: null, running: false, done: false },
-      },
+      roomTempC,
+      steps: [],
       timeline: [
         {
-          id: `tl-${Date.now()}`,
-          timestamp: Date.now(),
-          timeStr: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
+          id: `tl-${now}`,
+          timestamp: now,
+          timeStr,
           stageName: 'Setup',
           message: `Created recipe with ${hydration}% hydration and ${loaves} loaf`,
           type: 'start',
@@ -182,6 +193,20 @@ export const NewBakeView: React.FC<NewBakeViewProps> = ({
         <div className="flex items-center gap-2">
           <span className="w-5 h-5 rounded-full bg-terracotta/10 text-terracotta flex items-center justify-center font-serif text-xs font-bold">1</span>
           <h2 className="font-serif text-[17px] font-semibold text-ink">Target Banneton Size</h2>
+        </div>
+
+        {/* Bake name — editable, pre-filled with a suggestion (not forced) */}
+        <div className="space-y-1.5">
+          <label className="font-sans text-[10px] text-faint uppercase font-semibold tracking-wider block">
+            Name this bake
+          </label>
+          <input
+            type="text"
+            value={bakeName}
+            onChange={(e) => setBakeName(e.target.value)}
+            placeholder={suggestedName}
+            className="w-full bg-oat border border-border-field rounded-[11px] px-3 py-2 font-serif text-sm text-ink placeholder:text-faint placeholder:italic focus:outline-none focus:ring-2 focus:ring-terracotta/20"
+          />
         </div>
 
         {/* Banneton Size Chips */}
@@ -283,6 +308,27 @@ export const NewBakeView: React.FC<NewBakeViewProps> = ({
               />
               <span className="absolute right-2 top-1/2 -translate-y-1/2 font-mono text-xs text-muted">%</span>
             </div>
+          </div>
+        </div>
+
+        {/* Room temperature — feeds the bulk-fermentation estimate on the bake card */}
+        <div className="flex items-center justify-between pt-1">
+          <label className="font-sans text-[10px] text-faint uppercase font-semibold tracking-wider flex items-center gap-1">
+            <Thermometer className="w-3 h-3 text-terracotta" /> Room temperature
+          </label>
+          <div className="relative">
+            <select
+              value={roomTempC}
+              onChange={(e) => setRoomTempC(Number(e.target.value))}
+              className="appearance-none bg-oat border border-border-field rounded-[11px] pl-3 pr-8 py-2 font-mono font-bold text-sm text-ink focus:outline-none focus:ring-2 focus:ring-terracotta/20"
+            >
+              {TEMP_OPTIONS.map((p) => (
+                <option key={p.c} value={p.c}>
+                  {p.c}°C
+                </option>
+              ))}
+            </select>
+            <ChevronDown className="w-4 h-4 text-faint absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
           </div>
         </div>
       </div>
@@ -399,22 +445,38 @@ export const NewBakeView: React.FC<NewBakeViewProps> = ({
         {/* MODE B: TOTAL STARTER WEIGHT */}
         {starterInputMode === 'grams' && (
           <div className="space-y-3">
-            <div className="space-y-1.5">
-              <label className="font-sans text-[10px] text-faint uppercase font-semibold tracking-wider block">
-                Total Starter / Levain to Use (g)
-              </label>
-              <div className="relative">
-                <input
-                  type="number"
-                  value={starterTotalGrams}
-                  onChange={(e) => setStarterTotalGrams(Math.max(0, Number(e.target.value) || 0))}
-                  className="w-full bg-oat border border-border-field rounded-[11px] px-3 py-2 font-mono text-[16px] font-bold text-ink focus:outline-none text-right pr-8"
-                />
-                <span className="absolute right-3 top-1/2 -translate-y-1/2 font-sans text-xs text-muted">g</span>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <label className="font-sans text-[10px] text-faint uppercase font-semibold tracking-wider block">
+                  Total Starter (g)
+                </label>
+                <div className="relative">
+                  <input
+                    type="number"
+                    value={starterTotalGrams}
+                    onChange={(e) => setStarterTotalGrams(Math.max(0, Number(e.target.value) || 0))}
+                    className="w-full bg-oat border border-border-field rounded-[11px] px-3 py-2 font-mono text-[16px] font-bold text-ink focus:outline-none text-right pr-8"
+                  />
+                  <span className="absolute right-3 top-1/2 -translate-y-1/2 font-sans text-xs text-muted">g</span>
+                </div>
+              </div>
+              <div className="space-y-1.5">
+                <label className="font-sans text-[10px] text-faint uppercase font-semibold tracking-wider block">
+                  Starter Hydration
+                </label>
+                <div className="relative">
+                  <input
+                    type="number"
+                    value={gramsHydration}
+                    onChange={(e) => setGramsHydration(Math.max(0, Number(e.target.value) || 0))}
+                    className="w-full bg-oat border border-border-field rounded-[11px] px-3 py-2 font-mono text-[16px] font-bold text-ink focus:outline-none text-right pr-8"
+                  />
+                  <span className="absolute right-3 top-1/2 -translate-y-1/2 font-sans text-xs text-muted">%</span>
+                </div>
               </div>
             </div>
             <p className="font-serif italic text-xs text-muted">
-              Assumes standard 100% hydration starter (50% flour / 50% water).
+              {gramsHydration}% hydration &rarr; {computedStarterFlour}g flour / {computedStarterWater}g water.
             </p>
           </div>
         )}
