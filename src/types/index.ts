@@ -76,7 +76,14 @@ export interface BakeSession {
   time: string;
   title: string;
   status: 'active' | 'completed' | 'archived';
-  startedAt: number;             // ms epoch when the bake was created
+  startedAt: number;             // ms epoch when the recipe was created
+  /**
+   * ms epoch when the starter actually went into the flour. Bulk fermentation
+   * begins here, not at recipe creation — you can autolyse for an hour before
+   * this exists. Absent until the baker presses start; the bulk timer and the
+   * rise estimate both read this, never `startedAt`.
+   */
+  doughStartedAt?: number;
   starterId?: string;
   starterName?: string;
   totalFlour: number;
@@ -92,4 +99,9 @@ export interface BakeSession {
   timeline: StageActivityLog[];
   crumbRating?: number;
   tastingNotes?: string;
+  /** Always sorts to the top of History, regardless of the active sort order. */
+  pinned?: boolean;
+  /** Compressed data-URL images of the crumb/finished loaf. Stored locally — see
+   * utils/imageUtils.ts for why every photo is downscaled before it lands here. */
+  photos?: string[];
 }

@@ -7,12 +7,17 @@ import {
   Droplets,
   Sparkles,
   ChevronDown,
-  Thermometer,
 } from 'lucide-react';
 import { FlourBlendItem, StarterProfile, UserProfile, BakeSession } from '../../types';
-import { TEMP_GUIDE } from '../../utils/fermentationEngine';
+import { computeFormula } from '../../utils/recipeFormula';
+import { NumField } from '../common/NumField';
 
-const TEMP_OPTIONS = [...TEMP_GUIDE].sort((a, b) => a.c - b.c);
+// Default bake name: the day it was started, as DDMMYYYY (e.g. 29082026).
+const formatDateName = (ts: number): string => {
+  const d = new Date(ts);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${pad(d.getDate())}${pad(d.getMonth() + 1)}${d.getFullYear()}`;
+};
 
 interface NewBakeViewProps {
   user: UserProfile | null;
@@ -34,17 +39,15 @@ export const NewBakeView: React.FC<NewBakeViewProps> = ({
   const [loaves, setLoaves] = useState<number>(1);
   const [hydration, setHydration] = useState<number>(75);
   const [saltPct, setSaltPct] = useState<number>(2.0);
-  const [roomTempC, setRoomTempC] = useState<number>(23);
 
   // ================= SECTION 2: STARTER INPUT =================
   // Guests can't reach the diary, so don't default them into a mode that
   // silently pulls a saved starter with no visible control.
-  const [starterInputMode, setStarterInputMode] = useState<'diary' | 'grams' | 'manual'>(
-    user ? 'diary' : 'grams',
+  const [starterInputMode, setStarterInputMode] = useState<'diary' | 'manual'>(
+    user ? 'diary' : 'manual',
   );
   const [selectedStarterId, setSelectedStarterId] = useState<string>(starters[0]?.id || 'starter-1');
   const [starterTotalGrams, setStarterTotalGrams] = useState<number>(100);
-  const [gramsHydration, setGramsHydration] = useState<number>(100);
   const [manualStarterFlour, setManualStarterFlour] = useState<number>(50);
   const [manualStarterWater, setManualStarterWater] = useState<number>(50);
 
@@ -67,51 +70,56 @@ export const NewBakeView: React.FC<NewBakeViewProps> = ({
   // "From Diary" only counts when there's actually a signed-in user behind it.
   const useDiaryStarter = starterInputMode === 'diary' && !!user;
 
-  const suggestedName =
-    useDiaryStarter && selectedStarter ? `${selectedStarter.name} Loaf` : 'Country Sourdough';
+  // What's actually sitting in the jar right now: the total build from the most
+  // recent feed (feedHistory is newest-first). There's no separate "amount used"
+  // ledger, so this is an honest approximation, not a tracked inventory.
+  const mostRecentFeed = selectedStarter?.feedHistory?.[0];
+  const starterAvailableGrams = mostRecentFeed
+    ? mostRecentFeed.seedGrams + mostRecentFeed.flourGrams + mostRecentFeed.waterGrams
+    : null;
+  const starterInsufficient =
+    useDiaryStarter && starterAvailableGrams !== null && starterTotalGrams > starterAvailableGrams;
+
+  // Bakes are named by the day they're started, DDMMYYYY. Shown as a placeholder but
+  // kept as the real title if the field is left alone. Recomputed on every render and
+  // again at creation time, so a form left open overnight still saves the right date.
+  const suggestedName = formatDateName(Date.now());
 
   // ================= CALCULATION ENGINE =================
   let computedStarterFlour = 0;
   let computedStarterWater = 0;
   let computedTotalStarter = 0;
 
+  // Starter is an absolute amount, NOT per-loaf. What you type is what goes in the
+  // bowl, however many loaves you're shaping — scaling it by `loaves` was wrong.
   if (useDiaryStarter) {
     const hyd = selectedStarter ? selectedStarter.hydration : 100;
-    computedTotalStarter = starterTotalGrams * loaves;
+    computedTotalStarter = starterTotalGrams;
     computedStarterFlour = Math.round(computedTotalStarter / (1 + hyd / 100));
     computedStarterWater = computedTotalStarter - computedStarterFlour;
-  } else if (starterInputMode === 'grams') {
-    // Total-weight mode: split by the entered starter hydration, not a fixed 50/50.
-    computedTotalStarter = starterTotalGrams * loaves;
-    computedStarterFlour = Math.round(computedTotalStarter / (1 + gramsHydration / 100));
-    computedStarterWater = computedTotalStarter - computedStarterFlour;
-  } else if (starterInputMode === 'manual') {
-    computedStarterFlour = manualStarterFlour * loaves;
-    computedStarterWater = manualStarterWater * loaves;
+  } else {
+    computedStarterFlour = manualStarterFlour;
+    computedStarterWater = manualStarterWater;
     computedTotalStarter = computedStarterFlour + computedStarterWater;
   }
 
-  const totalWaterGrams = Math.round((totalFlour * hydration) / 100) * loaves;
-  const totalSaltGrams = Math.round((totalFlour * saltPct) / 100 * 10) / 10 * loaves;
-
-  const mainFlourTotal = Math.max(0, totalFlour * loaves - computedStarterFlour);
-  const mainWaterGrams = Math.max(0, totalWaterGrams - computedStarterWater);
-
-  const totalBlendPct = flourBlend.reduce((acc, item) => acc + (Number(item.percentage) || 0), 0) || 100;
-  const itemizedFlourRows = flourBlend.map((item) => {
-    const itemPct = (Number(item.percentage) || 0) / totalBlendPct;
-    const weightGrams = Math.round(mainFlourTotal * itemPct);
-    const bakersPercentage = totalFlour > 0 ? Math.round((weightGrams / (totalFlour * loaves)) * 1000) / 10 : 0;
-    return {
-      id: item.id,
-      name: `${item.name} (${item.percentage}%)`,
-      weightGrams,
-      bakersPercentage,
-    };
+  // Shared with the recipe panel on the active bake card, so what you weighed out
+  // and what you read back later can't drift apart. See utils/recipeFormula.ts.
+  const formula = computeFormula({
+    totalFlour,
+    loaves,
+    hydration,
+    saltPct,
+    starterFlour: computedStarterFlour,
+    starterWater: computedStarterWater,
+    flourBlend,
   });
+  const { trueTotalFlour, waterToAdd: mainWaterGrams, saltGrams: totalSaltGrams } = formula;
+  const itemizedFlourRows = formula.flourRows;
+  const totalDoughWeight = formula.totalDoughWeight;
 
-  const totalDoughWeight = totalFlour * loaves + totalWaterGrams + totalSaltGrams;
-  const totalDoughPercentage = totalFlour > 0 ? Math.round((totalDoughWeight / (totalFlour * loaves)) * 1000) / 10 : 0;
+  const totalBlendPct =
+    flourBlend.reduce((acc, item) => acc + (Number(item.percentage) || 0), 0) || 100;
 
   const handleAddFlour = () => {
     const newId = String(Date.now());
@@ -156,7 +164,7 @@ export const NewBakeView: React.FC<NewBakeViewProps> = ({
       id: now,
       date: 'Today',
       time: timeStr,
-      title: bakeName.trim() || suggestedName,
+      title: bakeName.trim() || formatDateName(now),
       status: 'active',
       startedAt: now,
       starterId: useDiaryStarter ? selectedStarter?.id : undefined,
@@ -164,12 +172,14 @@ export const NewBakeView: React.FC<NewBakeViewProps> = ({
       totalFlour,
       hydration,
       saltPct,
-      starterPct: Math.round((computedTotalStarter / (totalFlour * loaves)) * 100),
+      starterPct: trueTotalFlour > 0 ? Math.round((computedTotalStarter / trueTotalFlour) * 100) : 0,
       starterFlour: computedStarterFlour,
       starterWater: computedStarterWater,
       loaves,
       flourBlend,
-      roomTempC,
+      // Room temperature is set on the Active Bake screen, not here — this is just the
+      // seed value the fermentation estimate starts from.
+      roomTempC: 23,
       steps: [],
       timeline: [
         {
@@ -177,7 +187,7 @@ export const NewBakeView: React.FC<NewBakeViewProps> = ({
           timestamp: now,
           timeStr,
           stageName: 'Setup',
-          message: `Created recipe with ${hydration}% hydration and ${loaves} loaf`,
+          message: `Recipe created · ${hydration}% hydration · ${loaves} ${loaves === 1 ? 'loaf' : 'loaves'}`,
           type: 'start',
         },
       ],
@@ -192,12 +202,12 @@ export const NewBakeView: React.FC<NewBakeViewProps> = ({
       <div className="bg-card shadow-card border border-border-card rounded-[20px] p-[17px] space-y-4">
         <div className="flex items-center gap-2">
           <span className="w-5 h-5 rounded-full bg-terracotta/10 text-terracotta flex items-center justify-center font-serif text-xs font-bold">1</span>
-          <h2 className="font-serif text-[17px] font-semibold text-ink">Target Banneton Size</h2>
+          <h2 className="font-serif text-[18px] font-semibold text-ink">Target Banneton Size</h2>
         </div>
 
         {/* Bake name — editable, pre-filled with a suggestion (not forced) */}
         <div className="space-y-1.5">
-          <label className="font-sans text-[10px] text-faint uppercase font-semibold tracking-wider block">
+          <label className="font-sans text-[11px] text-faint uppercase font-semibold tracking-wider block">
             Name this bake
           </label>
           <input
@@ -228,7 +238,7 @@ export const NewBakeView: React.FC<NewBakeViewProps> = ({
               }`}
             >
               <span className="font-sans text-xs">{chip.label}</span>
-              <span className="font-sans text-[9px] text-faint">{chip.sub}</span>
+              <span className="font-sans text-[10px] text-faint">{chip.sub}</span>
             </button>
           ))}
         </div>
@@ -236,15 +246,14 @@ export const NewBakeView: React.FC<NewBakeViewProps> = ({
         {/* Conditional Total Flour Field (Only visible when Custom is active) */}
         {loafSizePreset === 'custom' && (
           <div className="space-y-1.5 pt-1 animate-fadeIn">
-            <label className="font-sans text-[10px] text-faint uppercase font-semibold tracking-wider block">
+            <label className="font-sans text-[11px] text-faint uppercase font-semibold tracking-wider block">
               Custom Total Flour (g)
             </label>
             <div className="relative">
-              <input
-                type="number"
+              <NumField
                 value={totalFlour}
-                onChange={(e) => setTotalFlour(Math.max(0, Number(e.target.value) || 0))}
-                className="w-full bg-oat border border-border-field rounded-[11px] px-3 py-2 font-mono text-[17px] font-bold text-ink focus:outline-none focus:ring-2 focus:ring-terracotta/20 text-right pr-10"
+                onChange={setTotalFlour}
+                className="w-full bg-oat border border-border-field rounded-[11px] px-3 py-2 font-mono text-[18px] font-bold text-ink focus:outline-none focus:ring-2 focus:ring-terracotta/20 text-right pr-10"
               />
               <span className="absolute right-3 top-1/2 -translate-y-1/2 font-sans text-xs text-muted">g</span>
             </div>
@@ -257,7 +266,7 @@ export const NewBakeView: React.FC<NewBakeViewProps> = ({
         <div className="grid grid-cols-3 gap-3 pt-1">
           {/* Loaves */}
           <div className="space-y-1.5">
-            <label className="font-sans text-[10px] text-faint uppercase font-semibold tracking-wider block text-center">
+            <label className="font-sans text-[11px] text-faint uppercase font-semibold tracking-wider block text-center">
               Loaves
             </label>
             <div className="flex items-center bg-oat border border-border-field rounded-[11px] px-1.5 py-1.5">
@@ -267,7 +276,7 @@ export const NewBakeView: React.FC<NewBakeViewProps> = ({
               >
                 -
               </button>
-              <span className="flex-1 text-center font-mono font-bold text-[16px] text-ink">{loaves}</span>
+              <span className="flex-1 text-center font-mono font-bold text-[17px] text-ink">{loaves}</span>
               <button
                 onClick={() => setLoaves((prev) => prev + 1)}
                 className="w-6 h-6 flex items-center justify-center font-bold text-muted hover:text-ink"
@@ -279,15 +288,14 @@ export const NewBakeView: React.FC<NewBakeViewProps> = ({
 
           {/* Hydration */}
           <div className="space-y-1.5">
-            <label className="font-sans text-[10px] text-faint uppercase font-semibold tracking-wider flex items-center justify-center gap-1">
+            <label className="font-sans text-[11px] text-faint uppercase font-semibold tracking-wider flex items-center justify-center gap-1">
               <Droplets className="w-3 h-3 text-terracotta" /> Hydration
             </label>
             <div className="relative">
-              <input
-                type="number"
+              <NumField
                 value={hydration}
-                onChange={(e) => setHydration(Number(e.target.value) || 0)}
-                className="w-full bg-oat border border-border-field rounded-[11px] px-2 py-2 font-mono font-bold text-[16px] text-ink focus:outline-none text-center pr-5"
+                onChange={setHydration}
+                className="w-full bg-oat border border-border-field rounded-[11px] px-5 py-2 font-mono font-bold text-[17px] text-ink focus:outline-none text-center"
               />
               <span className="absolute right-2 top-1/2 -translate-y-1/2 font-mono text-xs text-muted">%</span>
             </div>
@@ -295,57 +303,35 @@ export const NewBakeView: React.FC<NewBakeViewProps> = ({
 
           {/* Salt */}
           <div className="space-y-1.5">
-            <label className="font-sans text-[10px] text-faint uppercase font-semibold tracking-wider flex items-center justify-center gap-1">
+            <label className="font-sans text-[11px] text-faint uppercase font-semibold tracking-wider flex items-center justify-center gap-1">
               <Sparkles className="w-3 h-3 text-terracotta" /> Salt
             </label>
             <div className="relative">
-              <input
-                type="number"
-                step="0.1"
+              <NumField
                 value={saltPct}
-                onChange={(e) => setSaltPct(Number(e.target.value) || 0)}
-                className="w-full bg-oat border border-border-field rounded-[11px] px-2 py-2 font-mono font-bold text-[16px] text-ink focus:outline-none text-center pr-5"
+                onChange={setSaltPct}
+                allowDecimal
+                className="w-full bg-oat border border-border-field rounded-[11px] px-5 py-2 font-mono font-bold text-[17px] text-ink focus:outline-none text-center"
               />
               <span className="absolute right-2 top-1/2 -translate-y-1/2 font-mono text-xs text-muted">%</span>
             </div>
           </div>
         </div>
 
-        {/* Room temperature — feeds the bulk-fermentation estimate on the bake card */}
-        <div className="flex items-center justify-between pt-1">
-          <label className="font-sans text-[10px] text-faint uppercase font-semibold tracking-wider flex items-center gap-1">
-            <Thermometer className="w-3 h-3 text-terracotta" /> Room temperature
-          </label>
-          <div className="relative">
-            <select
-              value={roomTempC}
-              onChange={(e) => setRoomTempC(Number(e.target.value))}
-              className="appearance-none bg-oat border border-border-field rounded-[11px] pl-3 pr-8 py-2 font-mono font-bold text-sm text-ink focus:outline-none focus:ring-2 focus:ring-terracotta/20"
-            >
-              {TEMP_OPTIONS.map((p) => (
-                <option key={p.c} value={p.c}>
-                  {p.c}°C
-                </option>
-              ))}
-            </select>
-            <ChevronDown className="w-4 h-4 text-faint absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-          </div>
-        </div>
       </div>
 
       {/* ================= SECTION 2: STARTER INPUT ================= */}
       <div className="bg-card shadow-card border border-border-card rounded-[20px] p-[17px] space-y-4">
         <div className="flex items-center gap-2">
           <span className="w-5 h-5 rounded-full bg-terracotta/10 text-terracotta flex items-center justify-center font-serif text-xs font-bold">2</span>
-          <h2 className="font-serif text-[17px] font-semibold text-ink">Starter Input</h2>
+          <h2 className="font-serif text-[18px] font-semibold text-ink">Starter Input</h2>
         </div>
 
         {/* 3 Input Mode Tabs */}
-        <div className="grid grid-cols-3 gap-1.5 p-1 bg-oat border border-border-field rounded-xl">
+        <div className="grid grid-cols-2 gap-1.5 p-1 bg-oat border border-border-field rounded-xl">
           {[
             { id: 'diary' as const, label: 'From Diary' },
-            { id: 'grams' as const, label: 'Total Starter' },
-            { id: 'manual' as const, label: 'Flour & Water' },
+            { id: 'manual' as const, label: 'Manual Entry' },
           ].map((mode) => (
             <button
               key={mode.id}
@@ -377,14 +363,14 @@ export const NewBakeView: React.FC<NewBakeViewProps> = ({
                 className="bg-linen border border-dashed border-border-field rounded-[11px] p-2.5 flex items-start gap-2 cursor-pointer"
               >
                 <Lock className="w-3.5 h-3.5 text-terracotta flex-shrink-0 mt-0.5" />
-                <p className="text-muted font-sans text-[12px] leading-tight">
+                <p className="text-muted font-sans text-[13px] leading-tight">
                   <span className="font-bold text-ink">Starter Diary sync is a member feature.</span> Sign in to choose your saved starters.
                 </p>
               </div>
             ) : (
               <div className="space-y-3">
                 <div className="space-y-1">
-                  <label className="font-sans text-[10px] text-faint uppercase font-semibold tracking-wider block">
+                  <label className="font-sans text-[11px] text-faint uppercase font-semibold tracking-wider block">
                     Choose Saved Starter
                   </label>
                   <div className="relative">
@@ -410,7 +396,7 @@ export const NewBakeView: React.FC<NewBakeViewProps> = ({
                         <h4 className="font-serif font-bold text-ink text-base">{selectedStarter.name}</h4>
                         <p className="font-sans text-xs text-muted">{selectedStarter.hydration}% Hydration · {selectedStarter.flourType}</p>
                       </div>
-                      <span className={`px-2.5 py-0.5 rounded-full font-sans text-[10px] uppercase font-bold tracking-wider border ${
+                      <span className={`px-2.5 py-0.5 rounded-full font-sans text-[11px] uppercase font-bold tracking-wider border ${
                         selectedStarter.status === 'active_peak'
                           ? 'bg-terracotta/10 text-terracotta border-terracotta/20'
                           : 'bg-warning/10 text-warning border-warning/20'
@@ -422,19 +408,26 @@ export const NewBakeView: React.FC<NewBakeViewProps> = ({
                     <div className="flex items-center justify-between border-t border-dashed border-border-leader/50 pt-2.5">
                       <span className="font-sans text-xs text-muted font-medium">Starter amount to use:</span>
                       <div className="relative w-28">
-                        <input
-                          type="number"
+                        <NumField
                           value={starterTotalGrams}
-                          onChange={(e) => setStarterTotalGrams(Math.max(0, Number(e.target.value) || 0))}
-                          className="w-full bg-oat border border-border-field rounded-lg px-2 py-1 font-mono font-bold text-sm text-ink text-right pr-6 focus:outline-none"
+                          onChange={setStarterTotalGrams}
+                          className={`w-full bg-oat border rounded-lg px-2 py-1 font-mono font-bold text-sm text-ink text-right pr-6 focus:outline-none ${
+                            starterInsufficient ? 'border-danger' : 'border-border-field'
+                          }`}
                         />
                         <span className="absolute right-2 top-1/2 -translate-y-1/2 font-sans text-xs text-muted">g</span>
                       </div>
                     </div>
 
-                    <div className="bg-card/70 px-3 py-1.5 rounded-lg text-center font-sans text-[11px] text-terracotta font-semibold">
-                      ✓ Using {selectedStarter.name} ({starterTotalGrams}g total starter)
-                    </div>
+                    {starterInsufficient ? (
+                      <div className="bg-danger/10 px-3 py-1.5 rounded-lg text-center font-sans text-[12px] text-danger font-semibold">
+                        Not enough in the starter — {selectedStarter.name} has only {starterAvailableGrams}g available.
+                      </div>
+                    ) : (
+                      <div className="bg-card/70 px-3 py-1.5 rounded-lg text-center font-sans text-[12px] text-terracotta font-semibold">
+                        ✓ Using {selectedStarter.name} ({starterTotalGrams}g total starter)
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -442,74 +435,33 @@ export const NewBakeView: React.FC<NewBakeViewProps> = ({
           </div>
         )}
 
-        {/* MODE B: TOTAL STARTER WEIGHT */}
-        {starterInputMode === 'grams' && (
-          <div className="space-y-3">
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <label className="font-sans text-[10px] text-faint uppercase font-semibold tracking-wider block">
-                  Total Starter (g)
-                </label>
-                <div className="relative">
-                  <input
-                    type="number"
-                    value={starterTotalGrams}
-                    onChange={(e) => setStarterTotalGrams(Math.max(0, Number(e.target.value) || 0))}
-                    className="w-full bg-oat border border-border-field rounded-[11px] px-3 py-2 font-mono text-[16px] font-bold text-ink focus:outline-none text-right pr-8"
-                  />
-                  <span className="absolute right-3 top-1/2 -translate-y-1/2 font-sans text-xs text-muted">g</span>
-                </div>
-              </div>
-              <div className="space-y-1.5">
-                <label className="font-sans text-[10px] text-faint uppercase font-semibold tracking-wider block">
-                  Starter Hydration
-                </label>
-                <div className="relative">
-                  <input
-                    type="number"
-                    value={gramsHydration}
-                    onChange={(e) => setGramsHydration(Math.max(0, Number(e.target.value) || 0))}
-                    className="w-full bg-oat border border-border-field rounded-[11px] px-3 py-2 font-mono text-[16px] font-bold text-ink focus:outline-none text-right pr-8"
-                  />
-                  <span className="absolute right-3 top-1/2 -translate-y-1/2 font-sans text-xs text-muted">%</span>
-                </div>
-              </div>
-            </div>
-            <p className="font-serif italic text-xs text-muted">
-              {gramsHydration}% hydration &rarr; {computedStarterFlour}g flour / {computedStarterWater}g water.
-            </p>
-          </div>
-        )}
-
-        {/* MODE C: MANUAL STARTER FLOUR & WATER */}
+        {/* MODE B: MANUAL STARTER FLOUR & WATER */}
         {starterInputMode === 'manual' && (
           <div className="space-y-3">
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
-                <label className="font-sans text-[10px] text-faint uppercase font-semibold tracking-wider block">
+                <label className="font-sans text-[11px] text-faint uppercase font-semibold tracking-wider block">
                   Starter Flour (g)
                 </label>
                 <div className="relative">
-                  <input
-                    type="number"
+                  <NumField
                     value={manualStarterFlour}
-                    onChange={(e) => setManualStarterFlour(Math.max(0, Number(e.target.value) || 0))}
-                    className="w-full bg-oat border border-border-field rounded-[11px] px-3 py-2 font-mono text-[16px] font-bold text-ink focus:outline-none text-right pr-8"
+                    onChange={setManualStarterFlour}
+                    className="w-full bg-oat border border-border-field rounded-[11px] px-3 py-2 font-mono text-[17px] font-bold text-ink focus:outline-none text-right pr-8"
                   />
                   <span className="absolute right-3 top-1/2 -translate-y-1/2 font-sans text-xs text-muted">g</span>
                 </div>
               </div>
 
               <div className="space-y-1.5">
-                <label className="font-sans text-[10px] text-faint uppercase font-semibold tracking-wider block">
+                <label className="font-sans text-[11px] text-faint uppercase font-semibold tracking-wider block">
                   Starter Water (g)
                 </label>
                 <div className="relative">
-                  <input
-                    type="number"
+                  <NumField
                     value={manualStarterWater}
-                    onChange={(e) => setManualStarterWater(Math.max(0, Number(e.target.value) || 0))}
-                    className="w-full bg-oat border border-border-field rounded-[11px] px-3 py-2 font-mono text-[16px] font-bold text-ink focus:outline-none text-right pr-8"
+                    onChange={setManualStarterWater}
+                    className="w-full bg-oat border border-border-field rounded-[11px] px-3 py-2 font-mono text-[17px] font-bold text-ink focus:outline-none text-right pr-8"
                   />
                   <span className="absolute right-3 top-1/2 -translate-y-1/2 font-sans text-xs text-muted">g</span>
                 </div>
@@ -527,7 +479,7 @@ export const NewBakeView: React.FC<NewBakeViewProps> = ({
         <div className="flex justify-between items-center px-1">
           <h2 className="font-serif italic text-xs uppercase tracking-[0.22em] text-ink">Flour Blend</h2>
           {totalBlendPct !== 100 && (
-            <span className="font-sans text-[10px] text-warning bg-warning/10 px-2 py-0.5 rounded-full font-bold">
+            <span className="font-sans text-[11px] text-warning bg-warning/10 px-2 py-0.5 rounded-full font-bold">
               Total: {totalBlendPct}%
             </span>
           )}
@@ -544,12 +496,9 @@ export const NewBakeView: React.FC<NewBakeViewProps> = ({
                 className="flex-1 min-w-0 bg-oat border border-border-field rounded-lg px-2.5 py-2 font-serif text-xs sm:text-sm text-ink focus:outline-none focus:ring-1 focus:ring-terracotta/30"
               />
               <div className="w-20 sm:w-24 relative flex-shrink-0">
-                <input
-                  type="number"
-                  min="0"
-                  max="100"
+                <NumField
                   value={item.percentage}
-                  onChange={(e) => handleUpdateFlour(item.id, 'percentage', e.target.value)}
+                  onChange={(n) => handleUpdateFlour(item.id, 'percentage', n)}
                   className="w-full bg-oat border border-border-field rounded-[11px] px-2 py-2 font-mono font-bold text-xs sm:text-sm text-ink text-center pr-6 focus:outline-none focus:ring-1 focus:ring-terracotta/30"
                 />
                 <span className="absolute right-2 top-1/2 -translate-y-1/2 font-mono text-xs text-muted pointer-events-none">%</span>
@@ -584,63 +533,60 @@ export const NewBakeView: React.FC<NewBakeViewProps> = ({
 
         <div className="bg-card rounded-[20px] shadow-card border border-border-card overflow-hidden">
           <div className="p-[17px] space-y-3">
+            {/* These are the physical amounts to weigh out — not the totals in the dough. */}
+            <p className="font-sans text-[11px] text-faint uppercase font-semibold tracking-wider">
+              To be added
+            </p>
+
             {itemizedFlourRows.map((row) => (
               <div key={row.id} className="flex items-baseline w-full">
-                <span className="font-serif text-[15px] text-ink whitespace-nowrap">{row.name}</span>
+                <span className="font-serif text-[16px] text-ink whitespace-nowrap">
+                  {row.name}
+                  <span className="font-sans text-[11px] text-faint ml-1.5">[{row.blendPct}%]</span>
+                </span>
                 <div className="flex-1 border-b-[1.5px] border-dotted border-border-leader mx-2 relative top-[-4px]" />
-                <div className="flex items-baseline gap-2 text-right min-w-[85px]">
-                  <span className="font-sans text-[15px] font-bold text-ink">{row.weightGrams}<span className="text-faint text-[10px] ml-0.5">g</span></span>
-                  <span className="font-mono text-[12px] text-muted w-10">{row.bakersPercentage}%</span>
-                </div>
+                <span className="font-sans text-[16px] font-bold text-ink text-right">{row.weightGrams}<span className="text-faint text-[11px] ml-0.5">g</span></span>
               </div>
             ))}
 
-            {/* Consolidated Starter Row */}
+            {/* Consolidated Starter Row — breakdown sits inline and must never wrap,
+                or the second line pushes the card padding out of shape. */}
             <div className="flex items-baseline w-full">
-              <div className="flex flex-col">
-                <span className="font-serif text-[15px] text-ink whitespace-nowrap">Starter</span>
-                <span className="font-sans text-[10px] text-faint">
-                  ({computedStarterFlour}g flour / {computedStarterWater}g water)
+              <span className="font-serif text-[16px] text-ink whitespace-nowrap">
+                Starter
+                <span className="font-sans text-[11px] text-faint ml-1.5">
+                  [{computedStarterFlour}g F, {computedStarterWater}g W]
                 </span>
-              </div>
+              </span>
               <div className="flex-1 border-b-[1.5px] border-dotted border-border-leader mx-2 relative top-[-4px]" />
-              <div className="flex items-baseline gap-2 text-right min-w-[85px]">
-                <span className="font-sans text-[15px] font-bold text-ink">{computedTotalStarter}<span className="text-faint text-[10px] ml-0.5">g</span></span>
-                <span className="font-mono text-[12px] text-muted w-10">
-                  {totalFlour > 0 ? Math.round((computedTotalStarter / (totalFlour * loaves)) * 1000) / 10 : 0}%
-                </span>
-              </div>
+              <span className="font-sans text-[16px] font-bold text-ink text-right">{computedTotalStarter}<span className="text-faint text-[11px] ml-0.5">g</span></span>
             </div>
 
             {/* Main Water Row */}
             <div className="flex items-baseline w-full">
-              <span className="font-serif text-[15px] text-ink whitespace-nowrap">Water</span>
+              <span className="font-serif text-[16px] text-ink whitespace-nowrap">Water</span>
               <div className="flex-1 border-b-[1.5px] border-dotted border-border-leader mx-2 relative top-[-4px]" />
-              <div className="flex items-baseline gap-2 text-right min-w-[85px]">
-                <span className="font-sans text-[15px] font-bold text-ink">{mainWaterGrams}<span className="text-faint text-[10px] ml-0.5">g</span></span>
-                <span className="font-mono text-[12px] text-muted w-10">
-                  {totalFlour > 0 ? Math.round((mainWaterGrams / (totalFlour * loaves)) * 1000) / 10 : 0}%
-                </span>
-              </div>
+              <span className="font-sans text-[16px] font-bold text-ink text-right">{mainWaterGrams}<span className="text-faint text-[11px] ml-0.5">g</span></span>
             </div>
 
             {/* Salt Row */}
             <div className="flex items-baseline w-full">
-              <span className="font-serif text-[15px] text-ink whitespace-nowrap">Salt</span>
+              <span className="font-serif text-[16px] text-ink whitespace-nowrap">Salt</span>
               <div className="flex-1 border-b-[1.5px] border-dotted border-border-leader mx-2 relative top-[-4px]" />
-              <div className="flex items-baseline gap-2 text-right min-w-[85px]">
-                <span className="font-sans text-[15px] font-bold text-ink">{totalSaltGrams}<span className="text-faint text-[10px] ml-0.5">g</span></span>
-                <span className="font-mono text-[12px] text-muted w-10">{saltPct}%</span>
-              </div>
+              <span className="font-sans text-[16px] font-bold text-ink text-right">{totalSaltGrams}<span className="text-faint text-[11px] ml-0.5">g</span></span>
             </div>
           </div>
 
-          <div className="bg-terracotta px-[17px] py-3.5 flex justify-between items-center text-onDark">
-            <span className="font-serif italic text-[15px] text-onDark">Total dough</span>
-            <div className="flex items-baseline gap-3">
-              <span className="font-sans text-[17px] font-extrabold text-onDark">{totalDoughWeight} g</span>
-              <span className="font-mono text-[13px] text-onDark/85">{totalDoughPercentage} %</span>
+          {/* Grams above are what you weigh out; the percentages are a property of the
+              finished dough, so they live down here rather than muddling the checklist. */}
+          <div className="bg-terracotta px-[17px] py-3.5 text-onDark">
+            <div className="flex justify-between items-baseline">
+              <span className="font-serif italic text-[16px] text-onDark">Total dough</span>
+              <span className="font-sans text-[18px] font-extrabold text-onDark">{totalDoughWeight} g</span>
             </div>
+            <p className="font-mono text-[13px] text-onDark/85 mt-1">
+              {hydration}% hydration · {saltPct}% salt
+            </p>
           </div>
         </div>
       </div>
@@ -649,7 +595,8 @@ export const NewBakeView: React.FC<NewBakeViewProps> = ({
       <div className="pt-2 pb-6">
         <button
           onClick={handleCreateSession}
-          className="w-full bg-terracotta hover:bg-primary text-white rounded-[16px] py-3.5 px-5 flex items-center justify-center gap-2 shadow-btnTerracotta active:scale-98 transition-all font-sans font-semibold text-[15px]"
+          disabled={starterInsufficient}
+          className="w-full bg-terracotta hover:bg-primary disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-[16px] py-3.5 px-5 flex items-center justify-center gap-2 shadow-btnTerracotta active:scale-98 transition-all font-sans font-semibold text-[16px]"
         >
           <span>Create Bake Session</span>
           <ArrowRight className="w-5 h-5" />

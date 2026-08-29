@@ -30,6 +30,18 @@ export default {
         // but isn't a default Tailwind step, so it was silently generating nothing.
         98: '0.98',
       },
+      // Whole-app type scale, bumped +1px off Tailwind's defaults for readability.
+      // The arbitrary `text-[Npx]` values scattered through src/ were bumped to match —
+      // keep the two in step if you change either.
+      fontSize: {
+        xs: ['13px', '17px'],
+        sm: ['15px', '21px'],
+        base: ['17px', '25px'],
+        lg: ['19px', '29px'],
+        xl: ['21px', '29px'],
+        '2xl': ['25px', '33px'],
+        '3xl': ['31px', '37px'],
+      },
       fontFamily: {
         serif: ['Spectral', 'Georgia', 'serif'],
         sans: ['Hanken Grotesk', '-apple-system', 'BlinkMacSystemFont', 'sans-serif'],

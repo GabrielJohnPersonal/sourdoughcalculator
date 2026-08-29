@@ -143,8 +143,16 @@ export default function App() {
     );
   };
 
+  const handleDeleteHistoryBake = (sessionId: number) => {
+    setBakeHistory((prev) => prev.filter((s) => s.id !== sessionId));
+  };
+
   const handleAddStarter = (newStarter: StarterProfile) => {
     setStarters((prev) => [newStarter, ...prev]);
+  };
+
+  const handleUpdateStarter = (updated: StarterProfile) => {
+    setStarters((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
   };
 
   const handleDeleteStarter = (starterId: string) => {
@@ -159,11 +167,27 @@ export default function App() {
           ...s,
           lastFedTimestamp: entry.timestamp,
           lastRatio: entry.ratio,
+          // Hydration is no longer typed in — it's read off the feed that was
+          // actually logged, so it tracks reality even as ratios change feed to feed.
+          hydration:
+            entry.flourGrams > 0
+              ? Math.round((entry.waterGrams / entry.flourGrams) * 100)
+              : s.hydration,
           status: 'active_peak',
           peakTargetTimestamp: Date.now() + 4.5 * 3600 * 1000,
           feedHistory: [entry, ...s.feedHistory],
         };
       })
+    );
+  };
+
+  const handleDeleteFeed = (starterId: string, feedId: string) => {
+    setStarters((prev) =>
+      prev.map((s) =>
+        s.id === starterId
+          ? { ...s, feedHistory: s.feedHistory.filter((f) => f.id !== feedId) }
+          : s,
+      ),
     );
   };
 
@@ -197,6 +221,7 @@ export default function App() {
             history={bakeHistory}
             onCloneBake={handleCloneBake}
             onUpdateBake={handleUpdateHistoryBake}
+            onDeleteBake={handleDeleteHistoryBake}
             onOpenAuth={() => setIsWelcomeModalOpen(true)}
           />
         )}
@@ -206,8 +231,10 @@ export default function App() {
             user={user}
             starters={starters}
             onAddStarter={handleAddStarter}
+            onUpdateStarter={handleUpdateStarter}
             onDeleteStarter={handleDeleteStarter}
             onLogFeed={handleLogFeed}
+            onDeleteFeed={handleDeleteFeed}
             onOpenAuth={() => setIsWelcomeModalOpen(true)}
           />
         )}

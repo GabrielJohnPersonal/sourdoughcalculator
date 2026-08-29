@@ -15,8 +15,8 @@ export const Header: React.FC<HeaderProps> = ({
 }) => {
   return (
     <header className="fixed top-0 w-full z-40 bg-surface/85 backdrop-blur-xl border-b border-border-card/50 shadow-[0_1px_8px_rgba(0,0,0,0.03)]">
-      <div className="max-w-lg mx-auto h-16 px-5 flex items-center justify-between">
-        <h1 className="font-serif text-[22px] font-semibold text-ink tracking-tight">
+      <div className="max-w-lg mx-auto h-14 px-5 flex items-center justify-between">
+        <h1 className="font-serif text-[23px] font-semibold text-ink tracking-tight">
           {title}
         </h1>
 

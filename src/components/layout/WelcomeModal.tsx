@@ -52,7 +52,7 @@ export const WelcomeModal: React.FC<WelcomeModalProps> = ({
             <span className="font-serif italic text-xs uppercase tracking-[0.22em] text-terracotta block mb-1">
               Sourdough Calculator
             </span>
-            <h2 className="font-serif text-[22px] font-semibold text-ink leading-tight">
+            <h2 className="font-serif text-[23px] font-semibold text-ink leading-tight">
               Hey, welcome to your sourdough calculator
             </h2>
           </div>
@@ -142,7 +142,7 @@ export const WelcomeModal: React.FC<WelcomeModalProps> = ({
 
           {/* Quick Action Launchpad */}
           <div className="space-y-2.5">
-            <span className="font-sans text-[10px] uppercase font-bold text-faint tracking-wider block">
+            <span className="font-sans text-[11px] uppercase font-bold text-faint tracking-wider block">
               Choose an action to get started:
             </span>
 
@@ -208,7 +208,7 @@ export const WelcomeModal: React.FC<WelcomeModalProps> = ({
           <div className="border-t border-dashed border-border-field pt-3 space-y-1.5">
             <div className="flex items-center gap-1.5 text-terracotta">
               <Sparkles className="w-3.5 h-3.5" strokeWidth={2} />
-              <span className="font-sans text-[11px] font-bold uppercase tracking-wider">What's New</span>
+              <span className="font-sans text-[12px] font-bold uppercase tracking-wider">What's New</span>
             </div>
             <p className="font-sans text-xs text-muted leading-relaxed">
               Custom bake steps with drift-free wall-clock timers, a temperature-based bulk-fermentation estimate, and starters at any hydration.
